@@ -29,13 +29,29 @@ float distance = 300.f;
 int   span = 2048;
 
 float *q;
+float4 *formfactor;
+
+__device__ __constant__ float 
+d_atomC[9]={ 2.31000,  1.02000,  1.58860,  0.865000, 
+             20.8439,  10.2075, 0.568700,   51.6512,  
+             0.2156};
+
+__device__ __constant__ float 
+d_atomH[9]={ 0.493002, 0.322912, 0.140191, 0.040810, 
+             10.5109,  26.1257, 3.14236,  57.7997,
+			 0.003038};
+
+__device__ __constant__ float 
+d_atomO[9]={ 3.04850,  2.28680,  1.54630,  0.867000, 
+             13.2771,  5.70110, 0.323900, 32.9089,
+			 0.2508};
+
+__device__ __constant__ float 
+d_atomN[9]={ 12.2126,  3.13220,  2.01250,  1.16630,  
+             0.005700, 9.89330, 28.9975,  0.582600, 
+			 -11.52};
+
 /*
-__device__ __constant__ float d_atomC[9]={2.31000,  1.02000,  1.58860,  0.865000, 20.8439,  10.2075, 0.568700, 51.6512,  0.2156};
-__device__ __constant__ float d_atomH[9]={0.493002, 0.322912, 0.140191, 0.040810, 10.5109,  26.1257, 3.14236,  57.7997,  0.003038};
-__device__ __constant__ float d_atomO[9]={3.04850,  2.28680,  1.54630,  0.867000, 13.2771,  5.70110, 0.323900, 32.9089,  0.2508};
-__device__ __constant__ float d_atomN[9]={12.2126,  3.13220,  2.01250,  1.16630,  0.005700, 9.89330, 28.9975,  0.582600, -11.52};
-
-
 texture<float4, 1, cudaReadModeElementType> crdTex;
 
 __device__ __constant__ char   d_atomtype[60000];
@@ -288,6 +304,7 @@ void Usage(char *argv0)
 	exit(-1);
 }
 
+
 __global__ void kernel_qr(float *q, 
                           int N, 
 						  float inv_lamda, 
@@ -299,30 +316,99 @@ __global__ void kernel_qr(float *q,
 	{
 		q[gid] = FOUR_PI * inv_lamda * sin(0.5 * atan( gid * 0.0732f * inv_distance));
 	}
-		/*
-		float tmp, tmp_q, tmp_r;
-
-		tmp = gid * 0.0732f;	
-
-		tmp_r = inv_lamda * sin(0.5 * atan(tmp * inv_distance));
-		tmp_q = FOUR_PI * tmp_r;	
-		tmp_r += tmp_r;
-
-		d_q[gid] = tmp_q;	
-		d_R[gid] = tmp_r;	
-		*/
 }
+
+__global__ void kernel_factor(float *q, 
+                              int N,
+							  float4 *formfactor)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	// fixme : use vector instruction
+	if (gid < N)
+	{
+		float tmp;
+		float fc, fh, fo, fn;
+		//tmp = q[gid] * 0.25 * INV_PI;
+		//tmp = powf(tmp,2.0);
+		tmp = powf(q[gid] * 0.25 * INV_PI, 2.0);
+
+		// loop unrolling
+		fc = d_atomC[0] * expf(-d_atomC[4] * tmp) +
+			 d_atomC[1] * expf(-d_atomC[5] * tmp) +
+			 d_atomC[2] * expf(-d_atomC[6] * tmp) +
+			 d_atomC[3] * expf(-d_atomC[7] * tmp) +
+			 d_atomC[8];
+
+		fh = d_atomH[0] * expf(-d_atomH[4] * tmp) +
+			d_atomH[1] * expf(-d_atomH[5] * tmp) +
+			d_atomH[2] * expf(-d_atomH[6] * tmp) +
+			d_atomH[3] * expf(-d_atomH[7] * tmp) +
+			d_atomH[8];
+
+		fo = d_atomO[0] * expf(-d_atomO[4] * tmp) +
+			d_atomO[1] * expf(-d_atomO[5] * tmp) +
+			d_atomO[2] * expf(-d_atomO[6] * tmp) +
+			d_atomO[3] * expf(-d_atomO[7] * tmp) +
+			d_atomO[8];
+
+		fn = d_atomN[0] * expf(-d_atomN[4] * tmp) +
+			d_atomN[1] * expf(-d_atomN[5] * tmp) +
+			d_atomN[2] * expf(-d_atomN[6] * tmp) +
+			d_atomN[3] * expf(-d_atomN[7] * tmp) +
+			d_atomN[8];
+
+		formfactor[gid] = make_float4(fc, fh, fo, fn);
+	}
+}
+
+
 
 void run_qr()
 {
+	// fixe me : use occupancy api
 	dim3 block(256, 1, 1);
 	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
 	kernel_qr <<< grid, block >>> (q, span, 1.f/lamda, 1.f/distance);
 	
+#if DB
 	cudaDeviceSynchronize();	
 
+	for(int i=0; i<span; i++)
+		printf("q[%d] : %f\n", i, q[i]);
+#endif
 }
+
+
+
+void run_factor()
+{
+	// fixe me : use occupancy api
+	dim3 block(256, 1, 1);
+	dim3 grid(ceil((float) span / block.x ), 1, 1);
+
+	kernel_factor <<< grid, block >>> (q, span, formfactor);
+	
+#if DB
+	cudaDeviceSynchronize();	
+
+	printf("\t\tC\t\tH\t\tO\t\tN\n");
+
+	for(int i = 0; i < span; i++)
+	{
+		printf("factor[%d] :\t%f\t%f\t%f\t%f\n", i, 
+		                                         formfactor[i].x,
+		                                         formfactor[i].y,
+		                                         formfactor[i].z,
+		                                         formfactor[i].w);
+	}
+#endif
+
+
+
+}
+
 
 int main(int argc, char*argv[])
 {
@@ -383,16 +469,17 @@ int main(int argc, char*argv[])
     printf("Device %d: \"%s\"\n", dev, deviceProp.name);
     std::cout << "max texture1d linear: " << deviceProp.maxTexture1DLinear << std::endl;
 
-	size_t bytes_n = sizeof(float) * span;
-
 	// um 
-	cudaMallocManaged((void**)&q, bytes_n);
+	cudaMallocManaged((void**)&q, sizeof(float) * span);
 
+	// step 1
 	run_qr();
 	
 
+	// step 2
+	cudaMallocManaged((void**)&formfactor, sizeof(float4) * span);
 
-
+	run_factor();
 
 
 	// release
