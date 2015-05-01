@@ -89,6 +89,51 @@ __global__ void kernel_qr(float *q,
 	}
 }
 
+__global__ void kernel_prepare(float *q,
+                                 int N,
+							     float4 *formfactor,
+								 float inv_lamda,
+								 float inv_distance)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	if (gid < N)
+	{
+		float tmp, local_q;
+		float fc, fh, fo, fn;
+
+		local_q = FOUR_PI * inv_lamda * sin(0.5 * atan(gid * 0.0732f * inv_distance));
+		tmp = -powf(local_q * 0.25 * INV_PI, 2.0);
+
+		// loop unrolling
+		fc = d_atomC[0] * expf(d_atomC[4] * tmp) +
+			 d_atomC[1] * expf(d_atomC[5] * tmp) +
+			 d_atomC[2] * expf(d_atomC[6] * tmp) +
+			 d_atomC[3] * expf(d_atomC[7] * tmp) +
+			 d_atomC[8];
+
+		fh = d_atomH[0] * expf(d_atomH[4] * tmp) +
+			d_atomH[1] * expf(d_atomH[5] * tmp) +
+			d_atomH[2] * expf(d_atomH[6] * tmp) +
+			d_atomH[3] * expf(d_atomH[7] * tmp) +
+			d_atomH[8];
+
+		fo = d_atomO[0] * expf(d_atomO[4] * tmp) +
+			d_atomO[1] * expf(d_atomO[5] * tmp) +
+			d_atomO[2] * expf(d_atomO[6] * tmp) +
+			d_atomO[3] * expf(d_atomO[7] * tmp) +
+			d_atomO[8];
+
+		fn = d_atomN[0] * expf(d_atomN[4] * tmp) +
+			d_atomN[1] * expf(d_atomN[5] * tmp) +
+			d_atomN[2] * expf(d_atomN[6] * tmp) +
+			d_atomN[3] * expf(d_atomN[7] * tmp) +
+			d_atomN[8];
+
+		formfactor[gid] = make_float4(fc, fh, fo, fn);
+		q[gid]          = local_q;
+	}
+}
 
 __global__ void kernel_qr_factor(float *q,
                                  int N,
@@ -386,16 +431,13 @@ int main(int argc, char*argv[])
 	// step 2
 	// run_factor();
 
-	// plan 1
+
 #if TK
 	cudaEventRecord(start, 0);
 #endif
 
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
+	kernel_prepare <<< grid, block >>> (q, span, formfactor, 1.f/lamda, 1.f/distance);
 
-	kernel_qr        <<< grid, block, 0, streams[0] >>> (q, span, 1.f/lamda, 1.f/distance);
-	kernel_factor_v1 <<< grid, block, 0, streams[1] >>> (span, formfactor, 1.f/lamda, 1.f/distance);
 
 #if TK
 	cudaEventRecord(stop, 0);
@@ -403,11 +445,6 @@ int main(int argc, char*argv[])
 	cudaEventElapsedTime(&elapsedTime, start, stop);
 	printf("runtime = %f ms\n", elapsedTime);
 #endif
-
-
-
-
-
 
 
 	// release
