@@ -62,6 +62,10 @@ float elapsedTime;
 cudaStream_t *streams;
 
 
+std::vector<char>  atom_type;
+std::vector<float4> crd;
+
+
 void Usage(char *argv0)
 {
 	const char *help_msg =	
@@ -75,19 +79,36 @@ void Usage(char *argv0)
 	exit(-1);
 }
 
-
-__global__ void kernel_qr(float *q, 
-                          int N, 
-						  float inv_lamda, 
-						  float inv_distance)
+// fixeme: bug!!!
+void readpdb()
 {
-	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+	char line[1000];
+	char p1[10];
+	char p2[10];
+	char p3[10];// type
+	char p4[10];
+	char p5[10];//x
+	char p6[10];//y
+	char p7[10];//z
+	char p8[10];
+	char p9[10];
+	char p10[2];//type as well
 
-	if (gid < N)
+	FILE *fp = fopen(fname,"r");
+	if(fp == NULL)
+		perror("Error opening file!!!\n\n");
+
+	while (fgets(line,1000,fp)!=NULL)
 	{
-		q[gid] = FOUR_PI * inv_lamda * sin(0.5 * atan( gid * 0.0732f * inv_distance));
+		sscanf(line, "%s %s %s %s %s %s %s %s %s %s", p1, p2, p3, p4, p5,
+				p6, p7, p8, p9, p10);
+		atom_type.push_back(p3[0]);
+		crd.push_back(make_float4(atof(p5), atof(p6), atof(p7), 0.f));
 	}
+
+	fclose(fp);
 }
+
 
 __global__ void kernel_prepare(float *q,
                                  int N,
@@ -103,53 +124,8 @@ __global__ void kernel_prepare(float *q,
 		float fc, fh, fo, fn;
 
 		local_q = FOUR_PI * inv_lamda * sin(0.5 * atan(gid * 0.0732f * inv_distance));
-		tmp = -powf(local_q * 0.25 * INV_PI, 2.0);
-
-		// loop unrolling
-		fc = d_atomC[0] * expf(d_atomC[4] * tmp) +
-			 d_atomC[1] * expf(d_atomC[5] * tmp) +
-			 d_atomC[2] * expf(d_atomC[6] * tmp) +
-			 d_atomC[3] * expf(d_atomC[7] * tmp) +
-			 d_atomC[8];
-
-		fh = d_atomH[0] * expf(d_atomH[4] * tmp) +
-			d_atomH[1] * expf(d_atomH[5] * tmp) +
-			d_atomH[2] * expf(d_atomH[6] * tmp) +
-			d_atomH[3] * expf(d_atomH[7] * tmp) +
-			d_atomH[8];
-
-		fo = d_atomO[0] * expf(d_atomO[4] * tmp) +
-			d_atomO[1] * expf(d_atomO[5] * tmp) +
-			d_atomO[2] * expf(d_atomO[6] * tmp) +
-			d_atomO[3] * expf(d_atomO[7] * tmp) +
-			d_atomO[8];
-
-		fn = d_atomN[0] * expf(d_atomN[4] * tmp) +
-			d_atomN[1] * expf(d_atomN[5] * tmp) +
-			d_atomN[2] * expf(d_atomN[6] * tmp) +
-			d_atomN[3] * expf(d_atomN[7] * tmp) +
-			d_atomN[8];
-
-		formfactor[gid] = make_float4(fc, fh, fo, fn);
 		q[gid]          = local_q;
-	}
-}
 
-__global__ void kernel_qr_factor(float *q,
-                                 int N,
-							     float4 *formfactor,
-								 float inv_lamda,
-								 float inv_distance,
-								 int offset)
-{
-	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x + offset;
-
-	if (gid < N)
-	{
-		float tmp, local_q;
-		float fc, fh, fo, fn;
-
-		local_q = FOUR_PI * inv_lamda * sin(0.5 * atan(gid * 0.0732f * inv_distance));
 		tmp = -powf(local_q * 0.25 * INV_PI, 2.0);
 
 		// loop unrolling
@@ -177,166 +153,10 @@ __global__ void kernel_qr_factor(float *q,
 			d_atomN[3] * expf(d_atomN[7] * tmp) +
 			d_atomN[8];
 
-		formfactor[gid + offset] = make_float4(fc, fh, fo, fn);
-		q[gid + offset]          = local_q;
-	}
-}
-
-__global__ void kernel_factor_v1(int N,
-							     float4 *formfactor,
-								 float inv_lamda,
-								 float inv_distance)
-{
-	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-
-	if (gid < N)
-	{
-		float tmp;
-		float fc, fh, fo, fn;
-
-		tmp = FOUR_PI * inv_lamda * sin(0.5 * atan( gid * 0.0732f * inv_distance));
-		tmp = -powf(tmp * 0.25 * INV_PI, 2.0);
-
-		// loop unrolling
-		fc = d_atomC[0] * expf(d_atomC[4] * tmp) +
-			 d_atomC[1] * expf(d_atomC[5] * tmp) +
-			 d_atomC[2] * expf(d_atomC[6] * tmp) +
-			 d_atomC[3] * expf(d_atomC[7] * tmp) +
-			 d_atomC[8];
-
-		fh = d_atomH[0] * expf(d_atomH[4] * tmp) +
-			d_atomH[1] * expf(d_atomH[5] * tmp) +
-			d_atomH[2] * expf(d_atomH[6] * tmp) +
-			d_atomH[3] * expf(d_atomH[7] * tmp) +
-			d_atomH[8];
-
-		fo = d_atomO[0] * expf(d_atomO[4] * tmp) +
-			d_atomO[1] * expf(d_atomO[5] * tmp) +
-			d_atomO[2] * expf(d_atomO[6] * tmp) +
-			d_atomO[3] * expf(d_atomO[7] * tmp) +
-			d_atomO[8];
-
-		fn = d_atomN[0] * expf(d_atomN[4] * tmp) +
-			d_atomN[1] * expf(d_atomN[5] * tmp) +
-			d_atomN[2] * expf(d_atomN[6] * tmp) +
-			d_atomN[3] * expf(d_atomN[7] * tmp) +
-			d_atomN[8];
-
 		formfactor[gid] = make_float4(fc, fh, fo, fn);
 	}
 }
 
-__global__ void kernel_factor(float *q, 
-                              int N,
-							  float4 *formfactor)
-{
-	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-
-	// fixme : use vector instruction
-	if (gid < N)
-	{
-		float tmp;
-		float fc, fh, fo, fn;
-		tmp = -powf(q[gid] * 0.25 * INV_PI, 2.0);
-
-		// loop unrolling
-		fc = d_atomC[0] * expf(d_atomC[4] * tmp) +
-			 d_atomC[1] * expf(d_atomC[5] * tmp) +
-			 d_atomC[2] * expf(d_atomC[6] * tmp) +
-			 d_atomC[3] * expf(d_atomC[7] * tmp) +
-			 d_atomC[8];
-
-		fh = d_atomH[0] * expf(d_atomH[4] * tmp) +
-			d_atomH[1] * expf(d_atomH[5] * tmp) +
-			d_atomH[2] * expf(d_atomH[6] * tmp) +
-			d_atomH[3] * expf(d_atomH[7] * tmp) +
-			d_atomH[8];
-
-		fo = d_atomO[0] * expf(d_atomO[4] * tmp) +
-			d_atomO[1] * expf(d_atomO[5] * tmp) +
-			d_atomO[2] * expf(d_atomO[6] * tmp) +
-			d_atomO[3] * expf(d_atomO[7] * tmp) +
-			d_atomO[8];
-
-		fn = d_atomN[0] * expf(d_atomN[4] * tmp) +
-			d_atomN[1] * expf(d_atomN[5] * tmp) +
-			d_atomN[2] * expf(d_atomN[6] * tmp) +
-			d_atomN[3] * expf(d_atomN[7] * tmp) +
-			d_atomN[8];
-
-		formfactor[gid] = make_float4(fc, fh, fo, fn);
-	}
-}
-
-void run_qr()
-{
-	// fixe me : use occupancy api
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-//#if TK
-//	cudaEventRecord(start, 0);
-//#endif
-
-
-	kernel_qr <<< grid, block >>> (q, span, 1.f/lamda, 1.f/distance);
-
-//#if TK
-//	cudaEventRecord(stop, 0);
-//	cudaEventSynchronize(stop);
-//	cudaEventElapsedTime(&elapsedTime, start, stop);
-//	printf("kernel_qr = %f ms\n", elapsedTime);
-//#endif
-
-	
-#if DB
-	cudaDeviceSynchronize();	
-
-	for(int i=0; i<span; i++)
-		printf("q[%d] : %f\n", i, q[i]);
-#endif
-}
-
-
-
-void run_factor()
-{
-	// fixe me : use occupancy api
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-//#if TK
-//	cudaEventRecord(start, 0);
-//#endif
-
-	kernel_factor <<< grid, block >>> (q, span, formfactor);
-
-//#if TK
-//	cudaEventRecord(stop, 0);
-//	cudaEventSynchronize(stop);
-//	cudaEventElapsedTime(&elapsedTime, start, stop);
-//	printf("kernel_factor = %f ms\n", elapsedTime);
-//#endif
-
-	
-#if DB
-	cudaDeviceSynchronize();	
-
-	printf("\t\tC\t\tH\t\tO\t\tN\n");
-
-	for(int i = 0; i < span; i++)
-	{
-		printf("factor[%d] :\t%f\t%f\t%f\t%f\n", i, 
-		                                         formfactor[i].x,
-		                                         formfactor[i].y,
-		                                         formfactor[i].z,
-		                                         formfactor[i].w);
-	}
-#endif
-
-
-
-}
 
 
 int main(int argc, char*argv[])
@@ -425,11 +245,8 @@ int main(int argc, char*argv[])
 		checkCudaErrors(cudaStreamCreate(&(streams[i])));
 	}
 
-	// step 1
-	// run_qr();
-
-	// step 2
-	// run_factor();
+	dim3 block(256, 1, 1);
+	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
 
 #if TK
@@ -445,6 +262,18 @@ int main(int argc, char*argv[])
 	cudaEventElapsedTime(&elapsedTime, start, stop);
 	printf("runtime = %f ms\n", elapsedTime);
 #endif
+
+	readpdb();
+
+	std::cout << "crd size " << crd.size() << std::endl; 
+	for(int i=0; i<crd.size(); i++)
+	{
+		printf("crd[%d] = %f\t%f\t%f\n", i, crd[i].x, crd[i].y, crd[i].z);		
+	}
+
+
+
+	//std::cout << "element size " << atom_type.size() << std::endl; 
 
 
 	// release
