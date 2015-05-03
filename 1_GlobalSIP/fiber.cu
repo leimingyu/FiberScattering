@@ -45,14 +45,18 @@ d_atomN[9]={ 12.2126,  3.13220,  2.01250,  1.16630,
 
 
 // global value
-char* fname;
-float lamda;
-float distance;
-int   span;
-int   nstreams;
+char     *fname;
+float     lamda;
+float     distance;
+int       span;
+int       nstreams;
+int       linenum;
 
-float *q;
-float4 *formfactor;
+// unified memory
+float     *q;
+float4    *formfactor;
+char      *atom_type;
+float4    *crd;
 
 // event timing
 cudaEvent_t start, stop;
@@ -61,9 +65,8 @@ float elapsedTime;
 // cuda streams
 cudaStream_t *streams;
 
-
-std::vector<char>  atom_type;
-std::vector<float4> crd;
+//std::vector<char>  atom_type;
+//std::vector<float4> crd;
 
 
 void Usage(char *argv0)
@@ -82,30 +85,46 @@ void Usage(char *argv0)
 // fixeme: bug!!!
 void readpdb()
 {
+	// Steps:
+	// search the first line start from ATOM
+	// the 3rd column, first character is the atom type 
+	// 6, 7, 8 column is the x, y, z corordinates
+
 	char line[1000];
-	char p1[10];
-	char p2[10];
-	char p3[10];// type
-	char p4[10];
-	char p5[10];//x
-	char p6[10];//y
-	char p7[10];//z
-	char p8[10];
-	char p9[10];
-	char p10[2];//type as well
+	char c1[20];
+	char atominfo[20];
+	float x, y, z;
 
 	FILE *fp = fopen(fname,"r");
 	if(fp == NULL)
 		perror("Error opening file!!!\n\n");
 
+	linenum = 0;
 	while (fgets(line,1000,fp)!=NULL)
 	{
-		sscanf(line, "%s %s %s %s %s %s %s %s %s %s", p1, p2, p3, p4, p5,
-				p6, p7, p8, p9, p10);
-		atom_type.push_back(p3[0]);
-		crd.push_back(make_float4(atof(p5), atof(p6), atof(p7), 0.f));
+		sscanf(line, "%s", c1);
+		if(!(strcmp(c1, "ATOM")))
+			linenum++;
 	}
 
+	rewind(fp);
+
+	// unified memory 
+	cudaMallocManaged((void**)&atom_type,      sizeof(char) * linenum);
+	cudaMallocManaged((void**)&crd,          sizeof(float4) * linenum);
+
+	int id = 0;
+	while (fgets(line,1000,fp)!=NULL)
+	{
+		sscanf(line, "%s", c1);
+		if(!(strcmp(c1, "ATOM")))
+		{
+			sscanf(line, "%*s %*d %s %*s %*d %f %f %f", atominfo, &x, &y, &z);
+			atom_type[id] = atominfo[0];
+			crd[id]       = make_float4(x, y, z, 0.f);
+			id++;
+		}
+	}
 	fclose(fp);
 }
 
@@ -136,22 +155,22 @@ __global__ void kernel_prepare(float *q,
 			 d_atomC[8];
 
 		fh = d_atomH[0] * expf(d_atomH[4] * tmp) +
-			d_atomH[1] * expf(d_atomH[5] * tmp) +
-			d_atomH[2] * expf(d_atomH[6] * tmp) +
-			d_atomH[3] * expf(d_atomH[7] * tmp) +
-			d_atomH[8];
+			 d_atomH[1] * expf(d_atomH[5] * tmp) +
+			 d_atomH[2] * expf(d_atomH[6] * tmp) +
+			 d_atomH[3] * expf(d_atomH[7] * tmp) +
+			 d_atomH[8];
 
 		fo = d_atomO[0] * expf(d_atomO[4] * tmp) +
-			d_atomO[1] * expf(d_atomO[5] * tmp) +
-			d_atomO[2] * expf(d_atomO[6] * tmp) +
-			d_atomO[3] * expf(d_atomO[7] * tmp) +
-			d_atomO[8];
+			 d_atomO[1] * expf(d_atomO[5] * tmp) +
+			 d_atomO[2] * expf(d_atomO[6] * tmp) +
+			 d_atomO[3] * expf(d_atomO[7] * tmp) +
+			 d_atomO[8];
 
 		fn = d_atomN[0] * expf(d_atomN[4] * tmp) +
-			d_atomN[1] * expf(d_atomN[5] * tmp) +
-			d_atomN[2] * expf(d_atomN[6] * tmp) +
-			d_atomN[3] * expf(d_atomN[7] * tmp) +
-			d_atomN[8];
+			 d_atomN[1] * expf(d_atomN[5] * tmp) +
+			 d_atomN[2] * expf(d_atomN[6] * tmp) +
+			 d_atomN[3] * expf(d_atomN[7] * tmp) +
+			 d_atomN[8];
 
 		formfactor[gid] = make_float4(fc, fh, fo, fn);
 	}
@@ -235,7 +254,7 @@ int main(int argc, char*argv[])
 
 
 
-	// um 
+	// unified mem 
 	cudaMallocManaged((void**)&q,          sizeof(float) * span);
 	cudaMallocManaged((void**)&formfactor, sizeof(float4) * span);
 
@@ -265,20 +284,21 @@ int main(int argc, char*argv[])
 
 	readpdb();
 
-	std::cout << "crd size " << crd.size() << std::endl; 
-	for(int i=0; i<crd.size(); i++)
-	{
-		printf("crd[%d] = %f\t%f\t%f\n", i, crd[i].x, crd[i].y, crd[i].z);		
-	}
+//	for(int i=0; i<linenum; i++)
+//		printf("crd[%d] = %f\t%f\t%f\n", i, crd[i].x, crd[i].y, crd[i].z);		
+
 
 
 
 	//std::cout << "element size " << atom_type.size() << std::endl; 
 
-
-	// release
+	//-----------------------------------------------------------------------//
+	// Free Resource
+	//-----------------------------------------------------------------------//
 	cudaFree(q);
 	cudaFree(formfactor);
+	cudaFree(atom_type);
+	cudaFree(crd);
 
 	for (int i = 0 ; i < nstreams ; i++){
 		cudaStreamDestroy(streams[i]);
@@ -287,49 +307,5 @@ int main(int argc, char*argv[])
 
 	cudaDeviceReset();
 
-
-
-/*
-
-	for(int i=0; i<nstreams; i++)
-	{
-		checkCudaErrors(cudaMemcpyAsync(&h_Iq[i * N],   &d_Iq[i * N],  sizeof(float) * N, cudaMemcpyDeviceToHost, streams[i]));
-		checkCudaErrors(cudaMemcpyAsync(&h_Iqz[i * N], &d_Iqz[i * N],  sizeof(float) * N, cudaMemcpyDeviceToHost, streams[i]));
-	
-	}
-
-	cudaDeviceSynchronize();
-
-	for(int i=0; i < N; i++){
-		for(int s=1; s<nstreams; s++){
-			h_Iq[i]  += h_Iq[i + s * N];	
-			h_Iqz[i] += h_Iqz[i + s * N];	
-		}
-	}
-
-
-	// release resources
-
-	cudaUnbindTexture(crdTex);	
-
-
-	cudaFree(d_q);
-	cudaFree(d_R);
-	cudaFree(d_factor);
-	cudaFree(d_Iq);
-	cudaFree(d_Iqz);
-	cudaFree(d_crd);
-
-	cudaFreeHost(h_Iq);
-	cudaFreeHost(h_Iqz);
-
-#if DB
-	free(q);
-	free(R);
-	free(factor);
-#endif
-
-	checkCudaErrors(cudaDeviceReset());
-*/
 	exit (EXIT_SUCCESS);
 }
