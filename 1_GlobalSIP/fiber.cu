@@ -54,6 +54,8 @@ float     *q;
 float4    *formfactor;
 float     *Iq;
 float     *Iqz;
+float     *Iq_final;
+float     *Iqz_final;
 float4    *crd_c;
 float4    *crd_h;
 float4    *crd_o;
@@ -642,6 +644,388 @@ void compute_co()
 	}
 }
 
+// kernel_hc: when line_h is longer
+__global__ void kernel_hc(int streamID,
+                          int len_c,
+		                  int N,
+		                  int start,
+		                  int end,
+						  int ch_start,
+		                  float* Iq,
+		                  float* Iqz)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	int offset = N * streamID;
+	float iq, iqz;
+
+	if(gid < N)
+	{
+		float data  = q_const[gid];
+
+		// x: c		y: h	z: o
+		float fj_fk = formfactor_const[gid].x * formfactor_const[gid].y;
+
+		// iterate throught the h atom list 
+		for (int j = start; j <= end; ++j) 
+		{
+			float4 crd_ref = tex1Dfetch(crdh_tex, j);
+
+			// compare with the c atom list
+			for(int k = 0; k < len_c; ++k)
+			{
+				float4 distance = crd_ref - tex1Dfetch(crdc_tex, k);
+
+				iq  += fj_fk * j0(data * sqrt(distance.x * distance.x + distance.y * distance.y));
+				iqz += fj_fk * cosf(fabsf(distance.z) * data);
+			}
+		}
+
+		// accumulate the iterated results 
+		Iq[ch_start  + gid + offset] = iq;
+		Iqz[ch_start + gid + offset] = iqz;
+	}
+}
+
+
+// kernel_ch: when line_c is longer
+__global__ void kernel_ch(int streamID,
+                          int len_h,
+		                  int N,
+		                  int start,
+		                  int end,
+						  int ch_start,
+		                  float* Iq,
+		                  float* Iqz)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	int offset = N * streamID;
+	float iq, iqz;
+
+	if(gid < N)
+	{
+		float data  = q_const[gid];
+
+		// x: c		y: h	z: o
+		float fj_fk = formfactor_const[gid].x * formfactor_const[gid].y;
+
+		// iterate throught the c atom list 
+		for (int j = start; j <= end; ++j) 
+		{
+			float4 crd_ref = tex1Dfetch(crdc_tex, j);
+
+			// compare with the h atom list
+			for(int k = 0; k < len_h; ++k)
+			{
+				float4 distance = crd_ref - tex1Dfetch(crdh_tex, k);
+
+				iq  += fj_fk * j0(data * sqrt(distance.x * distance.x + distance.y * distance.y));
+				iqz += fj_fk * cosf(fabsf(distance.z) * data);
+			}
+		}
+
+		// accumulate the iterated results 
+		Iq[ch_start  + gid + offset] = iq;
+		Iqz[ch_start + gid + offset] = iqz;
+	}
+}
+
+
+void compute_ch()
+{
+	int len, step;
+	int ch_start = nstreams * span * 4;
+
+	std::vector<int> beginpos;
+	std::vector<int> endpos;
+
+	dim3 block(256, 1, 1);
+	dim3 grid(ceil((float) span / block.x ), 1, 1);
+
+
+	// find the longest atom list, and trunk it into nstreams 
+	// each stream will iterate through another atom list 
+	if(line_c < line_h)
+	{
+		len = line_h;		
+		step = len / nstreams;
+		
+		// fixme: put in a function
+		for(int i = 0; i < nstreams; i++)
+		{
+			beginpos.push_back(i * step);
+
+			if(i == (nstreams-1))
+			{
+				endpos.push_back(len - 1);
+			}
+			else
+			{
+				endpos.push_back((i + 1) * step - 1);
+			}
+		}
+
+		// when line_h is longer
+		for(int i = 0; i < nstreams; i++)
+		{
+			kernel_hc <<< grid, block, 0, streams[i] >>> (i,
+			                                            line_c,
+		                                       			span,
+		                                          		beginpos.at(i), 
+		                                          		endpos.at(i), 
+		                                          		ch_start,
+		                                          		Iq, 
+		                                          		Iqz); 
+		}                                      
+	}
+	else
+	{
+		len = line_c;		
+		step = len / nstreams;
+
+		for(int i = 0; i < nstreams; i++)
+		{
+			beginpos.push_back(i * step);
+
+			if(i == (nstreams-1))
+			{
+				endpos.push_back(len - 1);
+			}
+			else
+			{
+				endpos.push_back((i + 1) * step - 1);
+			}
+		}
+
+		// run cke
+		// when line_c is longer
+		for(int i = 0; i < nstreams; i++)
+		{
+			kernel_ch <<< grid, block, 0, streams[i] >>> (i,
+			                                             line_h,
+					                                     span,
+					                                     beginpos.at(i), 
+					                                     endpos.at(i), 
+					                                     ch_start,
+					                                     Iq, 
+					                                     Iqz); 
+		}
+	}
+}
+
+// kernel_ho: when line_h is longer
+__global__ void kernel_ho(int streamID,
+                          int len_o,
+		                  int N,
+		                  int start,
+		                  int end,
+						  int ho_start,
+		                  float* Iq,
+		                  float* Iqz)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	int offset = N * streamID;
+	float iq, iqz;
+
+	if(gid < N)
+	{
+		float data  = q_const[gid];
+		// x: c		y: h	z: o
+		float fj_fk = formfactor_const[gid].y * formfactor_const[gid].z;
+
+		// iterate throught the h atom list 
+		for (int j = start; j <= end; ++j) 
+		{
+			float4 crd_ref = tex1Dfetch(crdh_tex, j);
+
+			// compare with the o atom list
+			for(int k = 0; k < len_o; ++k)
+			{
+				float4 distance = crd_ref - tex1Dfetch(crdo_tex, k);
+
+				iq  += fj_fk * j0(data * sqrt(distance.x * distance.x + distance.y * distance.y));
+				iqz += fj_fk * cosf(fabsf(distance.z) * data);
+			}
+		}
+
+		// accumulate the iterated results 
+		Iq[ho_start  + gid + offset] = iq;
+		Iqz[ho_start + gid + offset] = iqz;
+	}
+}
+
+
+// kernel_oh: when line_o is longer
+__global__ void kernel_oh(int streamID,
+                          int len_h,
+		                  int N,
+		                  int start,
+		                  int end,
+						  int ho_start,
+		                  float* Iq,
+		                  float* Iqz)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	int offset = N * streamID;
+	float iq, iqz;
+
+	if(gid < N)
+	{
+		float data  = q_const[gid];
+		// x: c		y: h	z: o
+		float fj_fk = formfactor_const[gid].y * formfactor_const[gid].z;
+
+		// iterate throught the o atom list 
+		for (int j = start; j <= end; ++j) 
+		{
+			float4 crd_ref = tex1Dfetch(crdo_tex, j);
+
+			// compare with the h atom list
+			for(int k = 0; k < len_h; ++k)
+			{
+				float4 distance = crd_ref - tex1Dfetch(crdh_tex, k);
+
+				iq  += fj_fk * j0(data * sqrt(distance.x * distance.x + distance.y * distance.y));
+				iqz += fj_fk * cosf(fabsf(distance.z) * data);
+			}
+		}
+
+		// accumulate the iterated results 
+		Iq[ho_start  + gid + offset] = iq;
+		Iqz[ho_start + gid + offset] = iqz;
+	}
+}
+
+
+void compute_ho()
+{
+	int len, step;
+	int ho_start = nstreams * span * 5;
+
+	std::vector<int> beginpos;
+	std::vector<int> endpos;
+
+	dim3 block(256, 1, 1);
+	dim3 grid(ceil((float) span / block.x ), 1, 1);
+
+
+	// find the longest atom list, and trunk it into nstreams 
+	// each stream will iterate through another atom list 
+	if(line_o < line_h)
+	{
+		len = line_h;		
+		step = len / nstreams;
+		
+		for(int i = 0; i < nstreams; i++)
+		{
+			beginpos.push_back(i * step);
+
+			if(i == (nstreams-1))
+			{
+				endpos.push_back(len - 1);
+			}
+			else
+			{
+				endpos.push_back((i + 1) * step - 1);
+			}
+		}
+
+		// when line_h is longer
+		for(int i = 0; i < nstreams; i++)
+		{
+			kernel_ho <<< grid, block, 0, streams[i] >>> (i,
+			                                            line_o,
+		                                       			span,
+		                                          		beginpos.at(i), 
+		                                          		endpos.at(i), 
+		                                          		ho_start,
+		                                          		Iq, 
+		                                          		Iqz); 
+		}                                      
+	}
+	else
+	{
+		// when line_o is longer
+		len = line_o;		
+		step = len / nstreams;
+
+		for(int i = 0; i < nstreams; i++)
+		{
+			beginpos.push_back(i * step);
+
+			if(i == (nstreams-1))
+			{
+				endpos.push_back(len - 1);
+			}
+			else
+			{
+				endpos.push_back((i + 1) * step - 1);
+			}
+		}
+
+		// run cke
+		for(int i = 0; i < nstreams; i++)
+		{
+			kernel_oh <<< grid, block, 0, streams[i] >>> (i,
+			                                             line_h,
+					                                     span,
+					                                     beginpos.at(i), 
+					                                     endpos.at(i), 
+					                                     ho_start,
+					                                     Iq, 
+					                                     Iqz); 
+		}
+	}
+}
+
+
+__global__ void kernel_sum(float *Iq,
+                           float *Iqz,
+                           int    nstreams,
+                           int    N,
+                           float *Iq_final,
+                           float *Iqz_final)
+{
+	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+	// nstreams for each combination  and 6 combinations in total
+	int iterations = nstreams * 6;
+
+	if(gid < N)
+	{
+		float tmp_iq, tmp_iqz;
+		tmp_iq = tmp_iqz = 0.f;
+
+		for(int i = 0; i < iterations; i++)
+		{
+			tmp_iq  +=  Iq[i * N + gid];
+			tmp_iqz += Iqz[i * N + gid];
+		}
+		// accumulate the iterated results 
+		Iq_final[gid]  = tmp_iq;
+		Iqz_final[gid] = tmp_iqz;
+	}
+}
+
+
+void sum_pairwise()
+{
+	dim3 block(256, 1, 1);
+	dim3 grid(ceil((float) span / block.x ), 1, 1);
+
+	kernel_sum <<< grid, block >>> (Iq,
+			                        Iqz,
+			                        nstreams,
+									span,
+			                        Iq_final, 
+			                        Iqz_final); 
+}
+
+
+
 int main(int argc, char*argv[])
 {
 	//-----------------------------------------------------------------------//
@@ -720,8 +1104,8 @@ int main(int argc, char*argv[])
 	cudaMallocManaged((void**)&formfactor, sizeof(float4) * span);
 
 	// for each combination launch nstreams
-	cudaMallocManaged((void**)&Iq,         sizeof(float)  * span * nstreams * 6);
-	cudaMallocManaged((void**)&Iqz,        sizeof(float)  * span * nstreams * 6);
+	cudaMallocManaged((void**)&Iq,         sizeof(float) * span * nstreams * 6);
+	cudaMallocManaged((void**)&Iqz,        sizeof(float) * span * nstreams * 6);
 
 	// streams
 	streams = (cudaStream_t *) malloc(nstreams * sizeof(cudaStream_t));
@@ -764,129 +1148,28 @@ int main(int argc, char*argv[])
 	checkCudaErrors(cudaBindTexture(NULL, crdh_tex, crd_h, float4Desc));
 	checkCudaErrors(cudaBindTexture(NULL, crdo_tex, crd_o, float4Desc));
 
-	// caculate all the combinations
-	// factorial(n) / (factorial(2) * factorial(n-2))
-	//size_t cc = line_c * (line_c - 1) / 2;
-	//size_t hh = line_h * (line_h - 1) / 2;
-	//size_t oo = line_o * (line_o - 1) / 2;
-	//size_t ch = line_c * line_h;
-	//size_t co = line_c * line_o;
-	//size_t ho = line_h * line_o;
-
 	// output offsets
 	//   cc : 0
 	//   hh : 1 * nstreams * span
 	//   oo : 2 * nstreams * span
 	//   co : 3 * nstreams * span
+	//   ch : 4 * nstreams * span
+	//   ho : 5 * nstreams * span
 	compute_cc();
 	compute_hh();
 	compute_oo();
 	compute_co();
+	compute_ch();
+	compute_ho();
 
+	//-----------------------------------------------------------------------//
+	// sum pair wise compuation
+	//-----------------------------------------------------------------------//
+	cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span);
+	cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span);
 
-/*
-	cudaMemcpyToSymbol(atom_type_const, 
-                       atom_type, 
-					   sizeof(char) * linenum, 
-					   0, 
-					   cudaMemcpyHostToDevice);
+	sum_pairwise();
 
-	cudaChannelFormatDesc float4Desc = cudaCreateChannelDesc<float4>();
-	checkCudaErrors(cudaBindTexture(NULL, crd_tex, crd, float4Desc));
-*/
-
-/*
-	// slice the workloads for each stream
-	int atomNum = linenum; 
-	int lastpos = atomNum - 1;
-
-	int step = (atomNum - 1) / nstreams;
-
-	std::vector<int> stream_start;
-	std::vector<int> stream_en;
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		stream_start.push_back(i * step);
-
-		if(i == (nstreams-1))
-		{
-			stream_end.push_back(atomNum-2);
-		}
-		else
-		{
-			stream_end.push_back((i + 1) * step - 1);
-		}
-	}
-
-
-	for(int sid = 0; sid < nstreams; sid++)
-	{
-		kernel_pairwise <<< grid, block, 0, streams[sid] >>> (q, 
-                                                              formfactor, 
-                                                              stream_start.at(i), 
-											                  stream_end.at(i), 
-											                  lastpos, 
-                                                              span, 
-															  sid)
-	}
-	*/
-
-/*
-__global__ void kernel_pairwise(
-                                
-                                const int start,
-                                const int end,
-                                const int lastpos,
-                                const int N,
-                                const int streamID)
-{
-	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
-
-	int offset = N * streamID;
-
-	if(gid < N)
-	{
-		for (int startpos = start; startpos <= end; ++startpos) 
-		{
-			char t1, t2;
-			float fj, fk;
-
-			float4 crd_ref = tex1Dfetch(crd_tex, startpos); // load coordinates
-
-			t1 = atom_type_const[startpos];                 // read d_atomtype 1 time, by all N threads
-
-			for(int i = startpos + 1; i <= lastpos; ++i)    // atoms to compare with the base atom
-			{
-				float4 cur_crd = tex1Dfetch(crd_tex, i);
-				float4 distance =  crd_ref - cur_crd;
-
-				t2 = atom_type_const[i];                    // read d_atomtype i times 
-				if (t2 == 'C')
-				{
-					 rzcc_xy = sqrtf(powf(distance.x, 2) + powf(distance.y, 2);
-					 rzcc_z  = abs(distance.z);
-
-				}
-				else if (t2 == 'H')
-				{
-
-				}
-				else if (t2 == 'O')
-				{
-				}
-				else
-				{}
-
-
-
-				iq  += fj_fk * j0(q * );
-
-			} // end of loop
-		}
-	}// end of if (gid < N)
-}
-*/
 
 //	for(int i=0; i<linenum; i++)
 //		printf("crd[%d] = %f\t%f\t%f\n", i, crd[i].x, crd[i].y, crd[i].z);		

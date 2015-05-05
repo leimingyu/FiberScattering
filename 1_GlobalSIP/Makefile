@@ -25,7 +25,7 @@ endif
 
 LIB_LINKER = -lcudart
 
-SMS ?= 30 35 37 50
+SMS ?= 30 35
 
 ifeq ($(GENCODE_FLAGS),)
   $(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
