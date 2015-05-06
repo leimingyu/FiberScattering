@@ -36,18 +36,14 @@ endif
 #-----------------------------------------------------------------------------#
 all: build 
 
-build: fiber fiber1
+build: fiber
 
 fiber: fiber.cu
 	$(NVC) $(NV_INC) $(NV_LIB) $(NVCC_FLAGS) $(GENCODE_FLAGS) -o $@ $^ $(LIB_LINKER)
 
-fiber1: fiber1.cu
-	$(NVC) $(NV_INC) $(NV_LIB) $(NVCC_FLAGS) $(GENCODE_FLAGS) -o $@ $^ $(LIB_LINKER)
-
 run: build 
 	./fiber
-	./fiber1
 
 .PHONY: clean
 clean:
-	rm -rf fiber fiber1
+	rm -rf fiber 

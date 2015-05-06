@@ -1312,9 +1312,8 @@ int main(int argc, char*argv[])
 
 
 
-	std::cout << "kernels execution time = " << kernel_runtime << std::endl; 
+	std::cout << "kernels execution time = " << kernel_runtime << "ms\n";
 
-	//std::cout << "element size " << atom_type.size() << std::endl; 
 
 	//-----------------------------------------------------------------------//
 	// Free Resource
