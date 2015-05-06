@@ -1022,6 +1022,19 @@ void sum_pairwise()
 									span,
 			                        Iq_final, 
 			                        Iqz_final); 
+
+	std::cout << span << std::endl;
+
+	cudaDeviceSynchronize(); 
+
+	for(int i = 0; i < span; i++)
+	{
+		//printf("%f\n", Iq_final[0]);		
+		//printf("%f\n", Iqz_final[0]);		
+		printf("Iq[%d] = %f\n", i, Iq_final[i]);		
+		//printf("Iq[%d] = %f\n", i, Iq_final[0]);		
+	}
+
 }
 
 
@@ -1087,25 +1100,46 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	// GPU  
 	//-----------------------------------------------------------------------//
-    int dev = 0;
-    cudaSetDevice(dev);
-    cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, dev);
-    printf("Device %d: \"%s\"\n", dev, deviceProp.name);
-    std::cout << "max texture1d linear: " << deviceProp.maxTexture1DLinear << std::endl;
+    //int dev = 0;
+    //cudaSetDevice(dev);
+    //cudaDeviceProp deviceProp;
+    //cudaGetDeviceProperties(&deviceProp, dev);
+    //printf("Device %d: \"%s\"\n", dev, deviceProp.name);
+    //std::cout << "max texture1d linear: " << deviceProp.maxTexture1DLinear << std::endl;
+	// set device                                                               
+	cudaDeviceProp device_prop;                                                 
+	int dev_id = findCudaDevice(argc, (const char **) argv);                    
+	checkCudaErrors(cudaGetDeviceProperties(&device_prop, dev_id));             
+
+	if (!device_prop.managedMemory) {                                           
+		fprintf(stderr, "Unified Memory not supported on this device\n");       
+		cudaDeviceReset();                                                      
+		exit(EXIT_FAILURE);                                                      
+	}                                                                           
+
+	if (device_prop.computeMode == cudaComputeModeExclusive || device_prop.computeMode == cudaComputeModeProhibited)
+	{                                                                           
+		fprintf(stderr, "This sample requires a device in either default or process exclusive mode\n");
+		cudaDeviceReset();                                                      
+		exit(EXIT_FAILURE);                                                      
+	}      
+
+
+
 
 #if TK
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 #endif
 
+
 	// unified mem 
-	cudaMallocManaged((void**)&q,          sizeof(float)  * span);
-	cudaMallocManaged((void**)&formfactor, sizeof(float4) * span);
+	checkCudaErrors(cudaMallocManaged((void**)&q,          sizeof(float)  * span));
+	checkCudaErrors(cudaMallocManaged((void**)&formfactor, sizeof(float4) * span));
 
 	// for each combination launch nstreams
-	cudaMallocManaged((void**)&Iq,         sizeof(float) * span * nstreams * 6);
-	cudaMallocManaged((void**)&Iqz,        sizeof(float) * span * nstreams * 6);
+	checkCudaErrors(cudaMallocManaged((void**)&Iq,  sizeof(float) * span * nstreams * 6));
+	checkCudaErrors(cudaMallocManaged((void**)&Iqz, sizeof(float) * span * nstreams * 6));
 
 	// streams
 	streams = (cudaStream_t *) malloc(nstreams * sizeof(cudaStream_t));
@@ -1165,14 +1199,12 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	// sum pair wise compuation
 	//-----------------------------------------------------------------------//
-	cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span);
-	cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span);
+	checkCudaErrors(cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span));
+	checkCudaErrors(cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span));
 
 	sum_pairwise();
 
 
-//	for(int i=0; i<linenum; i++)
-//		printf("crd[%d] = %f\t%f\t%f\n", i, crd[i].x, crd[i].y, crd[i].z);		
 
 
 
@@ -1191,6 +1223,8 @@ int main(int argc, char*argv[])
 	cudaFree(crd_c);
 	cudaFree(crd_h);
 	cudaFree(crd_o);
+	cudaFree(Iq_final);
+	cudaFree(Iqz_final);
 
 	for (int i = 0 ; i < nstreams ; i++){
 		cudaStreamDestroy(streams[i]);
