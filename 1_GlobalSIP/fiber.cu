@@ -78,6 +78,7 @@ float elapsedTime;
 cudaEvent_t start, stop;
 cudaStream_t *streams;
 
+float kernel_runtime = 0.f;
 
 
 void Usage(char *argv0)
@@ -134,10 +135,10 @@ void readpdb()
 
 	rewind(fp);
 
-//	std::cout << linenum << std::endl;
-	std::cout << line_c << std::endl;
-	std::cout << line_h << std::endl;
-	std::cout << line_o << std::endl;
+	std::cout << "line number = " << linenum << std::endl;
+	//std::cout << line_c << std::endl;
+	//std::cout << line_h << std::endl;
+	//std::cout << line_o << std::endl;
 
 	// unified memory
 	cudaMallocManaged((void**)&crd_c, sizeof(float4) * line_c);
@@ -295,6 +296,10 @@ void compute_cc()
 	dim3 block(256, 1, 1);
 	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_cc <<< grid, block, 0, streams[i] >>> (i,
@@ -305,6 +310,15 @@ void compute_cc()
 				                                      Iq, 
 				                                      Iqz); 
 	}
+
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute cc = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
+#endif
 
 }
 
@@ -377,6 +391,10 @@ void compute_hh()
 	dim3 block(256, 1, 1);
 	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_hh <<< grid, block, 0, streams[i] >>> (i,
@@ -387,6 +405,15 @@ void compute_hh()
 				                                      Iq, 
 				                                      Iqz); 
 	}
+
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute hh = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
+#endif
 
 }
 
@@ -459,6 +486,10 @@ void compute_oo()
 	dim3 block(256, 1, 1);
 	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_oo <<< grid, block, 0, streams[i] >>> (i,
@@ -469,6 +500,15 @@ void compute_oo()
 				                                      Iq, 
 				                                      Iqz); 
 	}
+
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute oo = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
+#endif
 }
 
 // kernel_oc: when line_o is longer
@@ -570,7 +610,6 @@ void compute_co()
 	dim3 block(256, 1, 1);
 	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
-
 	// find the longest atom list, and trunk it into nstreams 
 	// each stream will iterate through another atom list 
 	if(line_c < line_o)
@@ -593,6 +632,10 @@ void compute_co()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
 		// run cke
 		// when line_o is longer
 		for(int i = 0; i < nstreams; i++)
@@ -606,6 +649,14 @@ void compute_co()
 		                                          		Iq, 
 		                                          		Iqz); 
 		}                                      
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute co= %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
+
 	}
 	else
 	{
@@ -627,6 +678,9 @@ void compute_co()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
 		// run cke
 		// when line_c is longer
 		for(int i = 0; i < nstreams; i++)
@@ -641,6 +695,14 @@ void compute_co()
 					                                     Iqz); 
 		}
 		
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute co= %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
+
 	}
 }
 
@@ -766,6 +828,9 @@ void compute_ch()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
 		// when line_h is longer
 		for(int i = 0; i < nstreams; i++)
 		{
@@ -778,6 +843,14 @@ void compute_ch()
 		                                          		Iq, 
 		                                          		Iqz); 
 		}                                      
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute ch = %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
+
 	}
 	else
 	{
@@ -798,6 +871,9 @@ void compute_ch()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
 		// run cke
 		// when line_c is longer
 		for(int i = 0; i < nstreams; i++)
@@ -811,6 +887,14 @@ void compute_ch()
 					                                     Iq, 
 					                                     Iqz); 
 		}
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute ch = %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
+
 	}
 }
 
@@ -933,6 +1017,9 @@ void compute_ho()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
 		// when line_h is longer
 		for(int i = 0; i < nstreams; i++)
 		{
@@ -945,6 +1032,14 @@ void compute_ho()
 		                                          		Iq, 
 		                                          		Iqz); 
 		}                                      
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute ho = %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
+
 	}
 	else
 	{
@@ -966,6 +1061,9 @@ void compute_ho()
 			}
 		}
 
+#if TK
+	cudaEventRecord(start, 0);
+#endif
 		// run cke
 		for(int i = 0; i < nstreams; i++)
 		{
@@ -978,6 +1076,13 @@ void compute_ho()
 					                                     Iq, 
 					                                     Iqz); 
 		}
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("compute ho = %f ms\n", elapsedTime);
+	kernel_runtime += elapsedTime;
+#endif
 	}
 }
 
@@ -1023,16 +1128,13 @@ void sum_pairwise()
 			                        Iq_final, 
 			                        Iqz_final); 
 
-	std::cout << span << std::endl;
+	//std::cout << span << std::endl;
 
 	cudaDeviceSynchronize(); 
 
 	for(int i = 0; i < span; i++)
 	{
-		//printf("%f\n", Iq_final[0]);		
-		//printf("%f\n", Iqz_final[0]);		
-		printf("Iq[%d] = %f\n", i, Iq_final[i]);		
-		//printf("Iq[%d] = %f\n", i, Iq_final[0]);		
+		// printf("Iq[%d] = %f\n", i, Iq_final[i]);		
 	}
 
 }
@@ -1161,7 +1263,9 @@ int main(int argc, char*argv[])
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("runtime = %f ms\n", elapsedTime);
+	printf("kernel prepare = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
 #endif
 
 	// copy q and formfactor to constant memory
@@ -1208,6 +1312,7 @@ int main(int argc, char*argv[])
 
 
 
+	std::cout << "kernels execution time = " << kernel_runtime << std::endl; 
 
 	//std::cout << "element size " << atom_type.size() << std::endl; 
 
