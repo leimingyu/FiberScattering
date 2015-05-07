@@ -80,6 +80,13 @@ cudaStream_t *streams;
 
 float kernel_runtime = 0.f;
 
+dim3 block(1, 1, 1);
+dim3 grid(1, 1, 1);
+
+std::vector<int> beginpos;
+std::vector<int> endpos;
+
+int stream_per_com;
 
 void Usage(char *argv0)
 {
@@ -228,6 +235,7 @@ __global__ void kernel_prepare(float *q,
 
 // kernel_cc
 __global__ void kernel_cc(int streamID,
+                         int line_c,
 		                 int N,
 		                 int start,
 		                 int end,
@@ -238,7 +246,7 @@ __global__ void kernel_cc(int streamID,
 	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
 	int offset = N * streamID;
-	int lastpos = N - 1;
+	int lastpos = line_c - 1;
 	float iq, iqz;
 
 	if(gid < N)
@@ -303,6 +311,7 @@ void compute_cc()
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_cc <<< grid, block, 0, streams[i] >>> (i,
+		                                              line_c,
 				                                      span,
 				                                      beginpos.at(i), 
 				                                      endpos.at(i), 
@@ -324,6 +333,7 @@ void compute_cc()
 
 // kernel_hh
 __global__ void kernel_hh(int streamID,
+                          int line_h,
 		                  int N,
 		                  int start,
 		                  int end,
@@ -334,7 +344,7 @@ __global__ void kernel_hh(int streamID,
 	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
 	int offset = N * streamID;
-	int lastpos = N - 1;
+	int lastpos = line_h - 1;
 	float iq, iqz;
 
 	if(gid < N)
@@ -398,6 +408,7 @@ void compute_hh()
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_hh <<< grid, block, 0, streams[i] >>> (i,
+		                                              line_h,
 				                                      span,
 				                                      beginpos.at(i), 
 				                                      endpos.at(i), 
@@ -419,6 +430,7 @@ void compute_hh()
 
 // kernel_oo
 __global__ void kernel_oo(int streamID,
+                          int line_o,
 		                  int N,
 		                  int start,
 		                  int end,
@@ -429,7 +441,7 @@ __global__ void kernel_oo(int streamID,
 	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
 	int offset = N * streamID;
-	int lastpos = N - 1;
+	int lastpos = line_o - 1;
 	float iq, iqz;
 
 	if(gid < N)
@@ -493,6 +505,7 @@ void compute_oo()
 	for(int i = 0; i < nstreams; i++)
 	{
 		kernel_oo <<< grid, block, 0, streams[i] >>> (i,
+		                                              line_o,
 				                                      span,
 				                                      beginpos.at(i), 
 				                                      endpos.at(i), 
@@ -1118,27 +1131,226 @@ __global__ void kernel_sum(float *Iq,
 
 void sum_pairwise()
 {
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
 
-	kernel_sum <<< grid, block >>> (Iq,
-			                        Iqz,
-			                        nstreams,
-									span,
-			                        Iq_final, 
-			                        Iqz_final); 
+//#if TK
+//	cudaEventRecord(start, 0);
+//#endif
+//
+	kernel_sum <<< grid, block >>> (Iq, Iqz, nstreams, span, Iq_final, Iqz_final); 
 
-	//std::cout << span << std::endl;
-
-	cudaDeviceSynchronize(); 
-
-	for(int i = 0; i < span; i++)
-	{
-		// printf("Iq[%d] = %f\n", i, Iq_final[i]);		
-	}
+//#if TK
+//	cudaEventRecord(stop, 0);
+//	cudaEventSynchronize(stop);
+//	cudaEventElapsedTime(&elapsedTime, start, stop);
+//	printf("kernel sum = %f ms\n", elapsedTime);
+//
+//	kernel_runtime += elapsedTime;
+//#endif
 
 }
 
+// compute workloads for cc
+void work_cc(int streamid)
+{
+	int len = line_c;
+	int sid = streamid % stream_per_com;
+	int step = (len - 1) / stream_per_com;
+
+	beginpos.push_back(sid * step);
+
+	if(sid == (stream_per_com-1))
+	{
+		endpos.push_back(len - 2);
+	}
+	else
+	{
+		endpos.push_back((sid + 1) * step - 1);
+	}
+
+	//std::cout << "cc sid: "<< sid << std::endl;
+}
+
+void work_hh(int streamid)
+{
+	int len = line_h;
+	int sid = streamid % stream_per_com;
+	int step = (len - 1) / stream_per_com;
+
+	beginpos.push_back(sid * step);
+
+	if(sid == (stream_per_com-1))
+	{
+		endpos.push_back(len - 2);
+	}
+	else
+	{
+		endpos.push_back((sid + 1) * step - 1);
+	}
+
+	//std::cout << "hh sid: "<< sid << std::endl;
+}
+
+void work_oo(int streamid)
+{
+	int len = line_o;
+	int sid = streamid % stream_per_com;
+	int step = (len - 1) / stream_per_com;
+
+	beginpos.push_back(sid * step);
+
+	if(sid == (stream_per_com-1)){
+		endpos.push_back(len - 2);
+	}
+	else{
+		endpos.push_back((sid + 1) * step - 1);
+	}
+	// std::cout << "oo sid: "<< sid << std::endl;
+}
+
+void work_co(int streamid)
+{
+	int len, step;
+	int sid = streamid % stream_per_com;
+
+	if(line_c < line_o)
+	{
+		len = line_o;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	else
+	{
+		len = line_c;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	//std::cout << "co sid: "<< sid << std::endl;
+}
+
+void work_ch(int streamid)
+{
+	int len, step;
+	int sid = streamid % stream_per_com;
+
+	if(line_c < line_h)
+	{
+		len = line_h;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	else
+	{
+		len = line_c;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	//std::cout << "ch sid: "<< sid << std::endl;
+}
+
+void work_ho(int streamid)
+{
+	int len, step;
+	int sid = streamid % stream_per_com;
+
+	if(line_o < line_h)
+	{
+		len = line_h;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	else
+	{
+		len = line_o;		
+		step = len / stream_per_com;
+		beginpos.push_back(sid * step);
+		if(sid == (stream_per_com-1)){
+			endpos.push_back(len - 1);
+		}else{
+			endpos.push_back((sid + 1) * step - 1);
+		}
+	}
+	//std::cout << "ho sid: "<< sid << std::endl;
+}
+
+void run_cc(int i)
+{
+	kernel_cc <<< grid, block, 0, streams[i] >>> (i, line_c, span, beginpos.at(i), endpos.at(i), 0, Iq, Iqz); 
+}
+
+void run_hh(int i)
+{
+	int hh_start = stream_per_com * span;
+	kernel_hh <<< grid, block, 0, streams[i] >>> (i, line_h, span, beginpos.at(i), endpos.at(i), hh_start, Iq, Iqz); 
+}
+
+void run_oo(int i)
+{
+	int oo_start = 2 * stream_per_com * span;
+	kernel_oo <<< grid, block, 0, streams[i] >>> (i, line_c, span, beginpos.at(i), endpos.at(i), oo_start, Iq, Iqz); 
+}
+
+void run_co(int i)
+{
+	int co_start = 3 * stream_per_com * span;
+
+	if(line_c < line_o) {
+		kernel_oc <<< grid, block, 0, streams[i] >>> (i, line_c, span, beginpos.at(i), endpos.at(i), co_start, Iq, Iqz); 
+	}
+	else
+	{
+		kernel_co <<< grid, block, 0, streams[i] >>> (i, line_o, span, beginpos.at(i), endpos.at(i), co_start, Iq, Iqz); 
+	}
+}
+
+void run_ch(int i)
+{
+	int ch_start = 4 * stream_per_com * span;
+
+	if(line_c < line_h) {
+		kernel_hc <<< grid, block, 0, streams[i] >>> (i, line_c, span, beginpos.at(i), endpos.at(i), ch_start, Iq, Iqz); 
+	}
+	else
+	{
+		kernel_ch <<< grid, block, 0, streams[i] >>> (i, line_h, span, beginpos.at(i), endpos.at(i), ch_start, Iq, Iqz); 
+	}
+}
+
+
+void run_ho(int i)
+{
+	int ho_start = 5 * stream_per_com * span;
+
+	if(line_h < line_o) {
+		kernel_oh <<< grid, block, 0, streams[i] >>> (i, line_h, span, beginpos.at(i), endpos.at(i), ho_start, Iq, Iqz); 
+	}else{
+		kernel_ho <<< grid, block, 0, streams[i] >>> (i, line_o, span, beginpos.at(i), endpos.at(i), ho_start, Iq, Iqz); 
+	}
+}
 
 
 int main(int argc, char*argv[])
@@ -1199,6 +1411,13 @@ int main(int argc, char*argv[])
 	std::cout << "span: "       << span      << std::endl;
 	std::cout << "streams: "    << nstreams  << std::endl;
 
+
+	if (nstreams < 6 || (nstreams % 6  != 0))
+	{
+		std::cout << "nstreams should be multiples of 6 and larger than 5\n";
+		exit(EXIT_FAILURE);                                                      
+	}
+
 	//-----------------------------------------------------------------------//
 	// GPU  
 	//-----------------------------------------------------------------------//
@@ -1240,8 +1459,8 @@ int main(int argc, char*argv[])
 	checkCudaErrors(cudaMallocManaged((void**)&formfactor, sizeof(float4) * span));
 
 	// for each combination launch nstreams
-	checkCudaErrors(cudaMallocManaged((void**)&Iq,  sizeof(float) * span * nstreams * 6));
-	checkCudaErrors(cudaMallocManaged((void**)&Iqz, sizeof(float) * span * nstreams * 6));
+	checkCudaErrors(cudaMallocManaged((void**)&Iq,  sizeof(float) * span * nstreams));
+	checkCudaErrors(cudaMallocManaged((void**)&Iqz, sizeof(float) * span * nstreams));
 
 	// streams
 	streams = (cudaStream_t *) malloc(nstreams * sizeof(cudaStream_t));
@@ -1293,12 +1512,89 @@ int main(int argc, char*argv[])
 	//   co : 3 * nstreams * span
 	//   ch : 4 * nstreams * span
 	//   ho : 5 * nstreams * span
-	compute_cc();
-	compute_hh();
-	compute_oo();
-	compute_co();
-	compute_ch();
-	compute_ho();
+
+
+	stream_per_com =  nstreams / 6; 
+
+	block.x = 256;
+	grid.x = ceil((float) span / block.x);
+
+	//std::cout << "stream_per_com : "<< stream_per_com << std::endl;
+	std::cout << "line_c : "<< line_c << std::endl;
+	std::cout << "line_h : "<< line_h << std::endl;
+	std::cout << "line_o : "<< line_o << std::endl;
+
+	//------------------------------------------//
+	// assign the workloads
+	//------------------------------------------//
+	for(int i = 0; i < nstreams; i++)
+	{
+		if(i< stream_per_com){
+			work_cc(i);
+		}else if (i < 2 * stream_per_com){
+			work_hh(i);
+		}else if (i < 3 * stream_per_com){
+			work_oo(i);
+		}else if (i < 4 * stream_per_com){
+			work_co(i);
+		}else if (i < 5 * stream_per_com){
+			work_ch(i);
+		}else {
+			work_ho(i);
+		}
+	}                                      
+
+/*
+	std::cout << "size of beginpos : " << beginpos.size() << std::endl;
+//	std::cout << "size of endpos : "   << endpos.size()   << std::endl;
+	for(int i=0; i<beginpos.size(); i++)
+	{
+		std::cout << beginpos[i] << " - "<< endpos[i] << std::endl;
+	}
+*/
+
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
+	// when line_h is longer
+	for(int i = 0; i < nstreams; i++)
+	{
+		if(i< stream_per_com)
+		{
+			run_cc(i);	
+		}
+		else if (i < 2 * stream_per_com)
+		{
+			run_hh(i);	
+		}
+		else if (i < 3 * stream_per_com)
+		{
+			run_oo(i);	
+		}
+		else if (i < 4 * stream_per_com)
+		{
+			run_co(i);	
+		}
+		else if (i < 5 * stream_per_com)
+		{
+			run_ch(i);	
+		}
+		else 
+		{
+			run_ho(i);	
+		}
+
+	}                                      
+
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("kernel pair-wise = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
+#endif
 
 	//-----------------------------------------------------------------------//
 	// sum pair wise compuation
@@ -1308,11 +1604,16 @@ int main(int argc, char*argv[])
 
 	sum_pairwise();
 
+	//std::cout << span << std::endl;
+
+	cudaDeviceSynchronize(); 
 
 
+//	for(int i = 0; i < span; i++){
+//		// printf("Iq[%d] = %f\n", i, Iq_final[i]);		
+//	}
 
-
-	std::cout << "kernels execution time = " << kernel_runtime << "ms\n";
+	std::cout << "kernels execution time = " << kernel_runtime << " ms\n";
 
 
 	//-----------------------------------------------------------------------//
