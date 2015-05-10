@@ -276,60 +276,6 @@ __global__ void kernel_cc(int streamID,
 
 
 
-void compute_cc()
-{
-	// Schedule the workloads to cuda streams
-	int len      = line_c;
-	int cc_start = 0;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	int step = (len - 1) / nstreams;
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		beginpos.push_back(i * step);
-
-		if(i == (nstreams-1))
-		{
-			endpos.push_back(len - 2);
-		}
-		else
-		{
-			endpos.push_back((i + 1) * step - 1);
-		}
-	}
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		kernel_cc <<< grid, block, 0, streams[i] >>> (i,
-		                                              line_c,
-				                                      span,
-				                                      beginpos.at(i), 
-				                                      endpos.at(i), 
-													  cc_start,
-				                                      Iq, 
-				                                      Iqz); 
-	}
-
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute cc = %f ms\n", elapsedTime);
-
-	kernel_runtime += elapsedTime;
-#endif
-
-}
 
 // kernel_hh
 __global__ void kernel_hh(int streamID,
@@ -373,60 +319,6 @@ __global__ void kernel_hh(int streamID,
 }
 
 
-void compute_hh()
-{
-	// Schedule the workloads to cuda streams
-	int len      = line_h;
-	int hh_start = nstreams * span;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	int step = (len - 1) / nstreams;
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		beginpos.push_back(i * step);
-
-		if(i == (nstreams-1))
-		{
-			endpos.push_back(len - 2);
-		}
-		else
-		{
-			endpos.push_back((i + 1) * step - 1);
-		}
-	}
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		kernel_hh <<< grid, block, 0, streams[i] >>> (i,
-		                                              line_h,
-				                                      span,
-				                                      beginpos.at(i), 
-				                                      endpos.at(i), 
-													  hh_start,
-				                                      Iq, 
-				                                      Iqz); 
-	}
-
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute hh = %f ms\n", elapsedTime);
-
-	kernel_runtime += elapsedTime;
-#endif
-
-}
 
 // kernel_oo
 __global__ void kernel_oo(int streamID,
@@ -470,59 +362,6 @@ __global__ void kernel_oo(int streamID,
 }
 
 
-void compute_oo()
-{
-	// Schedule the workloads to cuda streams
-	int len      = line_o;
-	int oo_start = nstreams * span * 2;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	int step = (len - 1) / nstreams;
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		beginpos.push_back(i * step);
-
-		if(i == (nstreams-1))
-		{
-			endpos.push_back(len - 2);
-		}
-		else
-		{
-			endpos.push_back((i + 1) * step - 1);
-		}
-	}
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-
-	for(int i = 0; i < nstreams; i++)
-	{
-		kernel_oo <<< grid, block, 0, streams[i] >>> (i,
-		                                              line_o,
-				                                      span,
-				                                      beginpos.at(i), 
-				                                      endpos.at(i), 
-													  oo_start,
-				                                      Iq, 
-				                                      Iqz); 
-	}
-
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute oo = %f ms\n", elapsedTime);
-
-	kernel_runtime += elapsedTime;
-#endif
-}
 
 // kernel_oc: when line_o is longer
 __global__ void kernel_oc(int streamID,
@@ -612,112 +451,6 @@ __global__ void kernel_co(int streamID,
 }
 
 
-void compute_co()
-{
-	int len, step;
-	int co_start = nstreams * span * 3;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-	// find the longest atom list, and trunk it into nstreams 
-	// each stream will iterate through another atom list 
-	if(line_c < line_o)
-	{
-		len = line_o;		
-		step = len / nstreams;
-		
-		// fixme: put in a function
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-
-		// run cke
-		// when line_o is longer
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_oc <<< grid, block, 0, streams[i] >>> (i,
-			                                            line_c,
-		                                       			span,
-		                                          		beginpos.at(i), 
-		                                          		endpos.at(i), 
-		                                          		co_start,
-		                                          		Iq, 
-		                                          		Iqz); 
-		}                                      
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute co= %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-
-	}
-	else
-	{
-		len = line_c;		
-		step = len / nstreams;
-
-		// fixme: put in a function
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-		// run cke
-		// when line_c is longer
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_co <<< grid, block, 0, streams[i] >>> (i,
-			                                             line_o,
-					                                     span,
-					                                     beginpos.at(i), 
-					                                     endpos.at(i), 
-					                                     co_start,
-					                                     Iq, 
-					                                     Iqz); 
-		}
-		
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute co= %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-
-	}
-}
 
 // kernel_hc: when line_h is longer
 __global__ void kernel_hc(int streamID,
@@ -807,109 +540,6 @@ __global__ void kernel_ch(int streamID,
 }
 
 
-void compute_ch()
-{
-	int len, step;
-	int ch_start = nstreams * span * 4;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-
-	// find the longest atom list, and trunk it into nstreams 
-	// each stream will iterate through another atom list 
-	if(line_c < line_h)
-	{
-		len = line_h;		
-		step = len / nstreams;
-		
-		// fixme: put in a function
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-		// when line_h is longer
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_hc <<< grid, block, 0, streams[i] >>> (i,
-			                                            line_c,
-		                                       			span,
-		                                          		beginpos.at(i), 
-		                                          		endpos.at(i), 
-		                                          		ch_start,
-		                                          		Iq, 
-		                                          		Iqz); 
-		}                                      
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute ch = %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-
-	}
-	else
-	{
-		len = line_c;		
-		step = len / nstreams;
-
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-		// run cke
-		// when line_c is longer
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_ch <<< grid, block, 0, streams[i] >>> (i,
-			                                             line_h,
-					                                     span,
-					                                     beginpos.at(i), 
-					                                     endpos.at(i), 
-					                                     ch_start,
-					                                     Iq, 
-					                                     Iqz); 
-		}
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute ch = %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-
-	}
-}
 
 // kernel_ho: when line_h is longer
 __global__ void kernel_ho(int streamID,
@@ -997,107 +627,6 @@ __global__ void kernel_oh(int streamID,
 }
 
 
-void compute_ho()
-{
-	int len, step;
-	int ho_start = nstreams * span * 5;
-
-	std::vector<int> beginpos;
-	std::vector<int> endpos;
-
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
-
-
-	// find the longest atom list, and trunk it into nstreams 
-	// each stream will iterate through another atom list 
-	if(line_o < line_h)
-	{
-		len = line_h;		
-		step = len / nstreams;
-		
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-		// when line_h is longer
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_ho <<< grid, block, 0, streams[i] >>> (i,
-			                                            line_o,
-		                                       			span,
-		                                          		beginpos.at(i), 
-		                                          		endpos.at(i), 
-		                                          		ho_start,
-		                                          		Iq, 
-		                                          		Iqz); 
-		}                                      
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute ho = %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-
-	}
-	else
-	{
-		// when line_o is longer
-		len = line_o;		
-		step = len / nstreams;
-
-		for(int i = 0; i < nstreams; i++)
-		{
-			beginpos.push_back(i * step);
-
-			if(i == (nstreams-1))
-			{
-				endpos.push_back(len - 1);
-			}
-			else
-			{
-				endpos.push_back((i + 1) * step - 1);
-			}
-		}
-
-#if TK
-	cudaEventRecord(start, 0);
-#endif
-		// run cke
-		for(int i = 0; i < nstreams; i++)
-		{
-			kernel_oh <<< grid, block, 0, streams[i] >>> (i,
-			                                             line_h,
-					                                     span,
-					                                     beginpos.at(i), 
-					                                     endpos.at(i), 
-					                                     ho_start,
-					                                     Iq, 
-					                                     Iqz); 
-		}
-#if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("compute ho = %f ms\n", elapsedTime);
-	kernel_runtime += elapsedTime;
-#endif
-	}
-}
 
 
 __global__ void kernel_sum(float *Iq,
@@ -1110,7 +639,7 @@ __global__ void kernel_sum(float *Iq,
 	size_t gid = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
 	// nstreams for each combination  and 6 combinations in total
-	int iterations = nstreams * 6;
+	int iterations = nstreams;
 
 	if(gid < N)
 	{
@@ -1132,20 +661,20 @@ __global__ void kernel_sum(float *Iq,
 void sum_pairwise()
 {
 
-//#if TK
-//	cudaEventRecord(start, 0);
-//#endif
-//
+#if TK
+	cudaEventRecord(start, 0);
+#endif
+
 	kernel_sum <<< grid, block >>> (Iq, Iqz, nstreams, span, Iq_final, Iqz_final); 
 
-//#if TK
-//	cudaEventRecord(stop, 0);
-//	cudaEventSynchronize(stop);
-//	cudaEventElapsedTime(&elapsedTime, start, stop);
-//	printf("kernel sum = %f ms\n", elapsedTime);
-//
-//	kernel_runtime += elapsedTime;
-//#endif
+#if TK
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&elapsedTime, start, stop);
+	printf("kernel sum = %f ms\n", elapsedTime);
+
+	kernel_runtime += elapsedTime;
+#endif
 
 }
 
@@ -1468,8 +997,9 @@ int main(int argc, char*argv[])
 		checkCudaErrors(cudaStreamCreate(&(streams[i])));
 	}
 
-	dim3 block(256, 1, 1);
-	dim3 grid(ceil((float) span / block.x ), 1, 1);
+	// configure the kernel grid size
+	block.x = 256;
+	grid.x  = ceil( (float) span / block.x );
 
 
 #if TK
@@ -1516,8 +1046,6 @@ int main(int argc, char*argv[])
 
 	stream_per_com =  nstreams / 6; 
 
-	block.x = 256;
-	grid.x = ceil((float) span / block.x);
 
 	//std::cout << "stream_per_com : "<< stream_per_com << std::endl;
 	std::cout << "line_c : "<< line_c << std::endl;
@@ -1529,7 +1057,8 @@ int main(int argc, char*argv[])
 	//------------------------------------------//
 	for(int i = 0; i < nstreams; i++)
 	{
-		if(i< stream_per_com){
+		if(i< stream_per_com)
+		{
 			work_cc(i);
 		}else if (i < 2 * stream_per_com){
 			work_hh(i);
@@ -1628,6 +1157,8 @@ int main(int argc, char*argv[])
 	cudaFree(crd_c);
 	cudaFree(crd_h);
 	cudaFree(crd_o);
+	cudaFree(Iq);
+	cudaFree(Iqz);
 	cudaFree(Iq_final);
 	cudaFree(Iqz_final);
 
