@@ -42,6 +42,7 @@ float elapsedTime;
 
 float kernel_runtime = 0.f;
 float transfer_time = 0.f;
+float alloc_time = 0.f;
 
 double t_start, t_end;
 
@@ -350,9 +351,40 @@ int main(int argc, char*argv[])
 #endif
 
 	
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
+
 	// copy coordinates to device and bind to texture memory
 	float4 *d_crd;
 	cudaMalloc((void**)&d_crd, sizeof(float4) * linenum);
+	// allocate other device memory
+	float *d_q;
+	cudaMalloc((void**)&d_q , bytes_n);
+
+	float4 *d_factor;
+	cudaMalloc((void**)&d_factor, sizeof(float4) * N);
+
+	// host mem for output
+	float *h_Iq  = NULL;
+	float *h_Iqz = NULL;
+	checkCudaErrors(cudaMallocHost((void**)&h_Iq,  sizeof(float) * N * nstreams));
+	checkCudaErrors(cudaMallocHost((void**)&h_Iqz, sizeof(float) * N * nstreams));
+
+	// device mem for output
+	float *d_Iq;
+	float *d_Iqz;
+	cudaMalloc((void**)&d_Iq,  sizeof(float) * N * nstreams);
+	cudaMalloc((void**)&d_Iqz, sizeof(float) * N * nstreams);
+
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("copy d_crd to device = %f ms\n", elapsedTime);
+
+	alloc_time += elapsedTime;
+#endif
 
 
 #if TK
@@ -377,13 +409,6 @@ int main(int argc, char*argv[])
 
 	cudaChannelFormatDesc float4Desc = cudaCreateChannelDesc<float4>();
 	checkCudaErrors(cudaBindTexture(NULL, crdTex, d_crd, float4Desc));
-
-	// allocate other device memory
-	float *d_q;
-	cudaMalloc((void**)&d_q , bytes_n);
-
-	float4 *d_factor;
-	cudaMalloc((void**)&d_factor, sizeof(float4) * N);
 
 	// configure dimensions of the kernel 
 	int block_size = 256;
@@ -436,18 +461,6 @@ int main(int argc, char*argv[])
 	//-------------------------------------------------------------------------------------------//
 	// calculate iq and iqz
 	//-------------------------------------------------------------------------------------------//
-
-	// host mem for output
-	float *h_Iq  = NULL;
-	float *h_Iqz = NULL;
-	checkCudaErrors(cudaMallocHost((void**)&h_Iq,  sizeof(float) * N * nstreams));
-	checkCudaErrors(cudaMallocHost((void**)&h_Iqz, sizeof(float) * N * nstreams));
-
-	// device mem for output
-	float *d_Iq;
-	float *d_Iqz;
-	cudaMalloc((void**)&d_Iq,  sizeof(float) * N * nstreams);
-	cudaMalloc((void**)&d_Iqz, sizeof(float) * N * nstreams);
 
 	// slice the wordloads for each stream
 	int atomNum = prepare.atom_type.size();
@@ -535,6 +548,7 @@ int main(int argc, char*argv[])
 	printf("\n\\-------------------------------\\\n");
 	printf("kernels execution time = %f ms\n", kernel_runtime);
 	printf("transfer time = %f ms\n", transfer_time);
+	printf("memory allocation time = %f ms\n", alloc_time);
 	fprintf(stdout, "CPU (sum results): %0.6lfs\n", t_end - t_start); 
 
 

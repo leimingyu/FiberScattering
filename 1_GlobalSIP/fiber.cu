@@ -75,10 +75,12 @@ int       line_o;
 
 // cuda related
 float elapsedTime;
-cudaEvent_t start, stop;
+cudaEvent_t start_event, stop_event;
 cudaStream_t *streams;
 
 float kernel_runtime = 0.f;
+float transfer_time = 0.f;
+float um_time = 0.f;
 
 dim3 block(1, 1, 1);
 dim3 grid(1, 1, 1);
@@ -147,10 +149,22 @@ void readpdb()
 	//std::cout << line_h << std::endl;
 	//std::cout << line_o << std::endl;
 
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
 	// unified memory
 	cudaMallocManaged((void**)&crd_c, sizeof(float4) * line_c);
 	cudaMallocManaged((void**)&crd_h, sizeof(float4) * line_h);
 	cudaMallocManaged((void**)&crd_o, sizeof(float4) * line_o);
+
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("um (mem allocation) = %f ms\n", elapsedTime);
+
+	um_time += elapsedTime;
+#endif
 
 	int id_c, id_h, id_o;
 	id_c = id_h = id_o = 0;
@@ -662,15 +676,15 @@ void sum_pairwise()
 {
 
 #if TK
-	cudaEventRecord(start, 0);
+	cudaEventRecord(start_event, 0);
 #endif
 
 	kernel_sum <<< grid, block >>> (Iq, Iqz, nstreams, span, Iq_final, Iqz_final); 
 
 #if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
 	printf("kernel sum = %f ms\n", elapsedTime);
 
 	kernel_runtime += elapsedTime;
@@ -978,18 +992,37 @@ int main(int argc, char*argv[])
 
 
 #if TK
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
+	//cudaEventCreate(&start_event);
+	//cudaEventCreate(&stop_event);
+	checkCudaErrors(cudaEventCreateWithFlags(&start_event, cudaEventBlockingSync));        
+	checkCudaErrors(cudaEventCreateWithFlags(&stop_event,  cudaEventBlockingSync));
 #endif
 
 
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
 	// unified mem 
 	checkCudaErrors(cudaMallocManaged((void**)&q,          sizeof(float)  * span));
 	checkCudaErrors(cudaMallocManaged((void**)&formfactor, sizeof(float4) * span));
-
 	// for each combination launch nstreams
 	checkCudaErrors(cudaMallocManaged((void**)&Iq,  sizeof(float) * span * nstreams));
 	checkCudaErrors(cudaMallocManaged((void**)&Iqz, sizeof(float) * span * nstreams));
+	// results
+	checkCudaErrors(cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span));
+	checkCudaErrors(cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span));
+
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("um (mem allocation) = %f ms\n", elapsedTime);
+
+	um_time += elapsedTime;
+#endif
+
+
+
 
 	// streams
 	streams = (cudaStream_t *) malloc(nstreams * sizeof(cudaStream_t));
@@ -1003,23 +1036,35 @@ int main(int argc, char*argv[])
 
 
 #if TK
-	cudaEventRecord(start, 0);
+	cudaEventRecord(start_event, 0);
 #endif
 
 	kernel_prepare <<< grid, block >>> (q, span, formfactor, 1.f/lamda, 1.f/distance);
 
 #if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
 	printf("kernel prepare = %f ms\n", elapsedTime);
 
 	kernel_runtime += elapsedTime;
 #endif
 
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
 	// copy q and formfactor to constant memory
 	cudaMemcpyToSymbol(q_const,                   q,  sizeof(float) * span, 0, cudaMemcpyDeviceToDevice);
 	cudaMemcpyToSymbol(formfactor_const, formfactor, sizeof(float4) * span, 0, cudaMemcpyDeviceToDevice);
+
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("copy q and formfactor to constant mem = %f ms\n", elapsedTime);
+
+	transfer_time += elapsedTime;
+#endif
 
 	// fixme: one thread doing the i/o
 	//        2nd thread working on the gpu prepare kernel
@@ -1083,7 +1128,7 @@ int main(int argc, char*argv[])
 */
 
 #if TK
-	cudaEventRecord(start, 0);
+	cudaEventRecord(start_event, 0);
 #endif
 
 	// when line_h is longer
@@ -1117,9 +1162,9 @@ int main(int argc, char*argv[])
 	}                                      
 
 #if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
 	printf("kernel pair-wise = %f ms\n", elapsedTime);
 
 	kernel_runtime += elapsedTime;
@@ -1128,9 +1173,6 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	// sum pair wise compuation
 	//-----------------------------------------------------------------------//
-	checkCudaErrors(cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span));
-	checkCudaErrors(cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span));
-
 	sum_pairwise();
 
 	//std::cout << span << std::endl;
@@ -1142,7 +1184,12 @@ int main(int argc, char*argv[])
 //		// printf("Iq[%d] = %f\n", i, Iq_final[i]);		
 //	}
 
-	std::cout << "kernels execution time = " << kernel_runtime << " ms\n";
+	//std::cout << "kernels execution time = " << kernel_runtime << " ms\n";
+
+	printf("\n\\-------------------------------\\\n");
+	printf("kernels execution time = %f ms\n", kernel_runtime);
+	printf("transfer time = %f ms\n", transfer_time);
+	printf("memory allocation time (Unified Memory) = %f ms\n", um_time);
 
 
 	//-----------------------------------------------------------------------//
