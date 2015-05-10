@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 #include <string>
+#include <time.h>
+#include <sys/time.h>
 #include <helper_cuda.h>
 #include <math_constants.h>
 
@@ -34,11 +36,22 @@ int N = 2048;
 size_t bytes_n;
 
 
-cudaEvent_t start, stop;
+cudaEvent_t start_event, stop_event;
 cudaStream_t *streams; 
 float elapsedTime;
 
 float kernel_runtime = 0.f;
+float transfer_time = 0.f;
+
+double t_start, t_end;
+
+double rtclock()
+{
+	struct timeval Tp;
+	gettimeofday (&Tp, NULL);
+
+	return(Tp.tv_sec + Tp.tv_usec*1.0e-6);
+}
 
 __device__ float3 operator-(const float3 &a, const float3 &b)
 {
@@ -311,19 +324,56 @@ int main(int argc, char*argv[])
 	// start gpu code 
 	//-----------------------------------------------------------------------//
 #if TK
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
+	//cudaEventCreate(&start_event);
+	//cudaEventCreate(&stop_event);
+	checkCudaErrors(cudaEventCreateWithFlags(&start_event, cudaEventBlockingSync));        
+	checkCudaErrors(cudaEventCreateWithFlags(&stop_event,  cudaEventBlockingSync));
 #endif
 
-	// copy atom type list to constant memory
-	cudaMemcpyToSymbol(d_atomtype, &prepare.atom_type[0], 
-	                   sizeof(char) * linenum, 0, cudaMemcpyHostToDevice);
+
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
+
+	cudaMemcpyToSymbol(d_atomtype, 
+	                   &prepare.atom_type[0], 
+	                   sizeof(char) * linenum, 
+					   0, 
+					   cudaMemcpyHostToDevice);
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("copy d_atomtype to constant memory = %f ms\n", elapsedTime);
+
+	transfer_time += elapsedTime;
+#endif
+
 	
 	// copy coordinates to device and bind to texture memory
 	float4 *d_crd;
 	cudaMalloc((void**)&d_crd, sizeof(float4) * linenum);
 
-	cudaMemcpy(d_crd, &prepare.crd[0], sizeof(float4) * linenum, cudaMemcpyHostToDevice);
+
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
+
+	cudaMemcpy(d_crd, 
+	           &prepare.crd[0], 
+			   sizeof(float4) * linenum, 
+			   cudaMemcpyHostToDevice);
+
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("copy d_crd to device = %f ms\n", elapsedTime);
+
+	transfer_time += elapsedTime;
+#endif
+
+
 
 	cudaChannelFormatDesc float4Desc = cudaCreateChannelDesc<float4>();
 	checkCudaErrors(cudaBindTexture(NULL, crdTex, d_crd, float4Desc));
@@ -340,7 +390,7 @@ int main(int argc, char*argv[])
 	int grid_size  = (N + block_size - 1)/block_size;
 
 #if TK
-	cudaEventRecord(start, 0);
+	cudaEventRecord(start_event, 0);
 #endif
 
 	//-----------------------------------------------------------------------//
@@ -349,9 +399,9 @@ int main(int argc, char*argv[])
 	kernel_prepare <<< grid_size, block_size >>> (d_q, d_factor, N, 1/lamda, 1/distance);
 
 #if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
 	printf("kernel prepare = %f ms\n", elapsedTime);
 
 	kernel_runtime += elapsedTime;
@@ -417,7 +467,7 @@ int main(int argc, char*argv[])
 	}
 
 #if TK
-	cudaEventRecord(start, 0);
+	cudaEventRecord(start_event, 0);
 #endif
 
 	for(int i=0; i<nstreams; i++)
@@ -436,15 +486,19 @@ int main(int argc, char*argv[])
 
 
 #if TK
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("calc_diffraction = %f ms\n", elapsedTime);
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("kernel calc_diffraction = %f ms\n", elapsedTime);
 
 	kernel_runtime += elapsedTime;
 #endif
 
 
+
+#if TK
+	cudaEventRecord(start_event, 0);
+#endif
 
 	for(int i=0; i<nstreams; i++)
 	{
@@ -453,7 +507,20 @@ int main(int argc, char*argv[])
 	
 	}
 
+#if TK
+	cudaEventRecord(stop_event, 0);
+	cudaEventSynchronize(stop_event);
+	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
+	printf("copy data back to host = %f ms\n", elapsedTime);
+
+	transfer_time += elapsedTime;
+#endif
+
 	cudaDeviceSynchronize();
+
+
+	// sum them up
+	t_start = rtclock();
 
 	for(int i=0; i < N; i++){
 		for(int s=1; s<nstreams; s++){
@@ -462,8 +529,14 @@ int main(int argc, char*argv[])
 		}
 	}
 
+	t_end = rtclock();
 
+
+	printf("\n\\-------------------------------\\\n");
 	printf("kernels execution time = %f ms\n", kernel_runtime);
+	printf("transfer time = %f ms\n", transfer_time);
+	fprintf(stdout, "CPU (sum results): %0.6lfs\n", t_end - t_start); 
+
 
 
 	// release resources
