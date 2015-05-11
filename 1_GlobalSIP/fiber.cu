@@ -81,6 +81,7 @@ cudaStream_t *streams;
 float kernel_runtime = 0.f;
 float transfer_time = 0.f;
 float um_time = 0.f;
+size_t um_bytes = 0;
 
 dim3 block(1, 1, 1);
 dim3 grid(1, 1, 1);
@@ -161,7 +162,14 @@ void readpdb()
 	cudaEventRecord(stop_event, 0);
 	cudaEventSynchronize(stop_event);
 	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
-	printf("um (mem allocation) = %f ms\n", elapsedTime);
+
+	printf("um (crd_c/h/o) = %f ms\n", elapsedTime); 
+
+//	um_bytes = sizeof(float4) * (line_c + line_h + line_o);
+//	printf("um (crd_c/h/o) = %f ms, throughput = %f MB/s\n", 
+//	       elapsedTime, 
+//		   (float) (um_bytes  *  1e-3 )/ elapsedTime);
+
 
 	um_time += elapsedTime;
 #endif
@@ -1016,7 +1024,12 @@ int main(int argc, char*argv[])
 	cudaEventRecord(stop_event, 0);
 	cudaEventSynchronize(stop_event);
 	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
-	printf("um (mem allocation) = %f ms\n", elapsedTime);
+
+	um_bytes = sizeof(float4) * span + sizeof(float) * (span * 3 + span * nstreams * 2);
+	printf("um (mem allocation) = %f ms, throughput = %f MB/s\n", 
+	       elapsedTime, 
+		   (float) (um_bytes  *  1e-3 )/ elapsedTime);
+
 
 	um_time += elapsedTime;
 #endif
@@ -1093,9 +1106,9 @@ int main(int argc, char*argv[])
 
 
 	//std::cout << "stream_per_com : "<< stream_per_com << std::endl;
-	std::cout << "line_c : "<< line_c << std::endl;
-	std::cout << "line_h : "<< line_h << std::endl;
-	std::cout << "line_o : "<< line_o << std::endl;
+	//std::cout << "line_c : "<< line_c << std::endl;
+	//std::cout << "line_h : "<< line_h << std::endl;
+	//std::cout << "line_o : "<< line_o << std::endl;
 
 	//------------------------------------------//
 	// assign the workloads
@@ -1115,6 +1128,89 @@ int main(int argc, char*argv[])
 			work_ch(i);
 		}else {
 			work_ho(i);
+		}
+	}                                      
+
+/*
+	for(int i=0; i<nstreams; i++)
+	{
+		j_a = beginpos[i];
+		j_b = endpos[i];
+		j_sum = 0;
+
+		for(int m = j_a; m <= j_b; m++)
+			j_sum += (lastpos - m);
+
+		printf("%d\n", j_sum);
+	}
+*/
+
+	int j_a, j_b, j_sum;
+
+	for(int i = 0; i < nstreams; i++)
+	{
+		j_a = beginpos[i];
+		j_b = endpos[i];
+
+		if(i< stream_per_com)
+		{
+		// cc
+			j_sum = 0;
+			for(int m = j_a; m <= j_b; m++)
+				j_sum += (line_c - 1 - m);
+			printf("%d\n", j_sum);
+		}else if (i < 2 * stream_per_com){
+		// hh
+			j_sum = 0;
+			for(int m = j_a; m <= j_b; m++)
+				j_sum += (line_h - 1 - m);
+			printf("%d\n", j_sum);
+		}else if (i < 3 * stream_per_com){
+		// oo
+			j_sum = 0;
+			for(int m = j_a; m <= j_b; m++)
+				j_sum += (line_h - 1 - m);
+			printf("%d\n", j_sum);
+		}else if (i < 4 * stream_per_com)
+		{
+		// co
+			if(line_c < line_o)
+			{
+				j_sum = (j_b - j_a + 1) * line_c; 
+				printf("%d\n", j_sum);
+			}
+			else
+			{
+				j_sum = (j_b - j_a + 1) * line_o; 
+				printf("%d\n", j_sum);
+			}
+		}else if (i < 5 * stream_per_com){
+		// ch
+			j_sum = 0;
+			if(line_c < line_h)
+			{
+				j_sum = (j_b - j_a + 1) * line_c; 
+				printf("%d\n", j_sum);
+			}
+			else
+			{
+				j_sum = (j_b - j_a + 1) * line_h; 
+				printf("%d\n", j_sum);
+			}
+		}else {
+		// ho
+			j_sum = 0;
+			if(line_h < line_o)
+			{
+				j_sum = (j_b - j_a + 1) * line_h; 
+				printf("%d\n", j_sum);
+			}
+			else
+			{
+				j_sum = (j_b - j_a + 1) * line_o; 
+				printf("%d\n", j_sum);
+			
+			}
 		}
 	}                                      
 

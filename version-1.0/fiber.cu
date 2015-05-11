@@ -471,12 +471,26 @@ int main(int argc, char*argv[])
 	std::vector<int> endpos;
 	for(int i=0; i<nstreams; i++){
 		beginpos.push_back(i * step);
-
 		if(i == (nstreams-1)){
 			endpos.push_back(atomNum-2);
 		}else{
 			endpos.push_back((i + 1) * step - 1);
 		}
+	}
+	printf("\n");
+
+	// print out the workloads
+	int j_a, j_b, j_sum;
+	for(int i=0; i<nstreams; i++)
+	{
+		j_a = beginpos[i];
+		j_b = endpos[i];
+		j_sum = 0;
+
+		for(int m = j_a; m <= j_b; m++)
+			j_sum += (lastpos - m);
+
+		printf("%d\n", j_sum);
 	}
 
 #if TK
