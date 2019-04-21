@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h> // getopt
 #include <time.h>
+#include <sys/time.h>
 #include <math.h>   // pi
 #include <string.h> // strcmp
 #include <iostream>
@@ -60,33 +61,40 @@ char      *atomtype;
 float     *Iq;
 float     *Iqz;
 
-/*
-//----------------//
-// unified memory
-//----------------//
-float     *Iq_final;
-float     *Iqz_final;
 
-int       nstreams;     // number of cuda streams
-
-// cuda related
-float elapsedTime;
-cudaEvent_t start, stop;
-cudaStream_t *streams;
-
-float kernel_runtime = 0.f;
-
-std::vector<int> beginpos;
-std::vector<int> endpos;
-
-int stream_per_com;
-*/
 void Usage(char *argv0);
 void readpdb();
 void prepare();
 void compute();
 
+//-----------//
+// timer
+//-----------//
+struct timeval timer;
 
+void tic(struct timeval *timer)
+{
+	gettimeofday(timer, NULL);
+}
+
+
+void toc(struct timeval *timer, const char* app)
+{
+	struct timeval tv_end, tv_diff;
+	gettimeofday(&tv_end, NULL);
+	long int diff = (tv_end.tv_usec + 1000000 * tv_end.tv_sec) -
+		(timer->tv_usec  + 1000000 * timer->tv_sec);
+
+	tv_diff.tv_sec  = diff / 1000000;
+	tv_diff.tv_usec = diff % 1000000;
+
+	printf("Elapsed time for %s = %ld.%06ld(s)\n", app, tv_diff.tv_sec, tv_diff.tv_usec);
+}
+
+
+//---------------------------------------------------------------------------//
+// Main Function 
+//---------------------------------------------------------------------------//
 int main(int argc, char*argv[])
 {
 	//-----------------------------------------------------------------------//
@@ -140,6 +148,10 @@ int main(int argc, char*argv[])
 	std::cout << "distance: "   << distance  << std::endl;
 	std::cout << "span: "       << span      << std::endl;
 
+	// used in compute() for results
+	Iq  = new float[span];
+	Iqz = new float[span];
+
 	//-----------------------------------------------------------------------//
 	// Read inputfile 
 	//-----------------------------------------------------------------------//
@@ -148,15 +160,16 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	// Prepare: compute q and factors 
 	//-----------------------------------------------------------------------//
+	tic(&timer);
 	prepare();
+	toc(&timer, "compute q and form factors");
 
 	//-----------------------------------------------------------------------//
 	// Compute 
 	//-----------------------------------------------------------------------//
-	Iq  = new float[linenum];
-	Iqz = new float[linenum];
-
+	tic(&timer);
 	compute();
+	toc(&timer, "compute intensity");
 
 	//-----------------------------------------------------------------------//
 	// Free resources 
@@ -229,9 +242,7 @@ void readpdb()
 	rewind(fp);
 
 	std::cout << "line number = " << linenum << std::endl;
-	//std::cout << line_c << std::endl;
-	//std::cout << line_h << std::endl;
-	//std::cout << line_o << std::endl;
+
 	crd_c = new float4[line_c];
 	crd_h = new float4[line_h];
 	crd_o = new float4[line_o];
