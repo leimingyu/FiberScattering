@@ -12,7 +12,7 @@ Here is a list of different versions we implemented.
 
 ## Usage
 ```bash
-Usage: ./fiber_cpu [options] -f filename
+Usage: ./fiber_(cpu/omp/cuda/mpi) [options] -f filename
 
     -f filename      :file containing atom info
     -l lamda         :angstrom value                 [default=1.033]
