@@ -13,8 +13,6 @@
 #define FOUR_PI (4 * M_PI)
 #define INV_PI  (M_1_PI)
 
-#define TK 1 // timer
-#define DB 0 // debug 
 
 const float 
 d_atomC[9]={ 2.31000,  1.02000,  1.58860,  0.865000, 
