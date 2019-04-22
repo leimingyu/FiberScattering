@@ -22,3 +22,23 @@ Usage: ./fiber_(cpu/omp/cuda/mpi) [options] -f filename
     -d distance      :specimen to detector distance  [default=300]
     -s span          :sampling resolution            [default=2048]
 ```
+
+## Reference / Citation
+Please refer to it if you want to use. 
+
+regular
+```
+Yu, Leiming, Yan Zhang, Xiang Gong, Nilay Roy, Lee Makowski, and David Kaeli. "High performance computing of fiber scattering simulation." In Proceedings of the 8th Workshop on General Purpose Processing using GPUs, pp. 90-98. ACM, 2015.
+```
+
+bibtex
+```
+@inproceedings{yu2015high,
+  title={High performance computing of fiber scattering simulation},
+  author={Yu, Leiming and Zhang, Yan and Gong, Xiang and Roy, Nilay and Makowski, Lee and Kaeli, David},
+  booktitle={Proceedings of the 8th Workshop on General Purpose Processing using GPUs},
+  pages={90--98},
+  year={2015},
+  organization={ACM}
+}
+```
