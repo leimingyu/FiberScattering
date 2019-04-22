@@ -5,8 +5,11 @@ The simulation algorithm is designed by Zhang Yan.<br>
 We developed optimized single GPU and multi-GPU solutions for this simulation.<br>
 Here is a list of different versions we implemented.
 <ul>
-<li>MPI + OpenMP</li>
-<li>MPI + GPU</li>
+<li>CPU : single-threaded</li>
+<li>CPU_OpenMP : parallelize for loop</li>
+<li>CUDA : GPU implementation for a single GPU system</li>
+<li>MPI_CUDA : distributed GPU implementation</li>
+<li>MPI_OpenMP :  distributed CPU implementation</li>
 </ul>
 
 
