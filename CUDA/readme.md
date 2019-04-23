@@ -1,4 +1,4 @@
-Usage: ./fiber [options] -f filename<br>
+Usage: ./fiber_gpu [options] -f filename<br>
 -f filename      :file contained atom info <br>
 -l lamda         :angstrom value                 [default=1.033] <br>
 -d distance      :specimen to detector distance  [default=300] <br>
