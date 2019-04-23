@@ -25,7 +25,7 @@ endif
 
 LIB_LINKER = -lcudart
 
-SMS ?= 30 35
+SMS ?= 30 35 50 52 60
 
 ifeq ($(GENCODE_FLAGS),)
   $(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
@@ -36,14 +36,14 @@ endif
 #-----------------------------------------------------------------------------#
 all: build 
 
-build: fiber
+build: fiber_gpu
 
-fiber: fiber.cu
+fiber_gpu: fiber_gpu.cu
 	$(NVC) $(NV_INC) $(NV_LIB) $(NVCC_FLAGS) $(GENCODE_FLAGS) -o $@ $^ $(LIB_LINKER)
 
 run: build 
-	./fiber
+	./fiber_gpu
 
 .PHONY: clean
 clean:
-	rm -rf fiber 
+	rm -rf fiber_gpu 

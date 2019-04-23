@@ -12,11 +12,12 @@
 #include <helper_math.h> // float4
 #include <helper_cuda.h> // check error
 
-
 #define FOUR_PI (4*CUDART_PI_F)
 #define INV_PI  (1/CUDART_PI_F)
+#define PI_P2 (CUDART_PI_F*CUDART_PI_F)
+#define INV_PI_P2  (1/PI_P2)
+
 #define TK 1 // time kernel
-#define DB 0 // debug 
 
 // texture memory
 texture<float4, 1, cudaReadModeElementType> crdc_tex;
@@ -153,6 +154,7 @@ void readpdb()
 #if TK
 	cudaEventRecord(start_event, 0);
 #endif
+
 	// unified memory
 	cudaMallocManaged((void**)&crd_c, sizeof(float4) * line_c);
 	cudaMallocManaged((void**)&crd_h, sizeof(float4) * line_h);
@@ -164,12 +166,6 @@ void readpdb()
 	cudaEventElapsedTime(&elapsedTime, start_event, stop_event);
 
 	printf("um (crd_c/h/o) = %f ms\n", elapsedTime); 
-
-//	um_bytes = sizeof(float4) * (line_c + line_h + line_o);
-//	printf("um (crd_c/h/o) = %f ms, throughput = %f MB/s\n", 
-//	       elapsedTime, 
-//		   (float) (um_bytes  *  1e-3 )/ elapsedTime);
-
 
 	um_time += elapsedTime;
 #endif
@@ -224,7 +220,8 @@ __global__ void kernel_prepare(float *q,
 		local_q = FOUR_PI * inv_lamda * sin(0.5 * atan(gid * 0.0732f * inv_distance));
 		q[gid]  = local_q;
 
-		tmp = -powf(local_q * 0.25 * INV_PI, 2.0);
+		//tmp = -powf(local_q * 0.25 * INV_PI, 2.0);
+		tmp = local_q * local_q * 0.0625 * INV_PI_P2;
 
 		// loop unrolling
 		fc = d_atomC[0] * expf(d_atomC[4] * tmp) +
@@ -912,7 +909,8 @@ int main(int argc, char*argv[])
 	lamda = 1.033f; 
 	distance = 300.f;
 	span = 2048;
-	nstreams = 30;
+
+	nstreams = 30; // default cuda streams to use
 
 	int opt;
 	int fflag = 0;
@@ -962,7 +960,6 @@ int main(int argc, char*argv[])
 	std::cout << "span: "       << span      << std::endl;
 	std::cout << "streams: "    << nstreams  << std::endl;
 
-
 	if (nstreams < 6 || (nstreams % 6  != 0))
 	{
 		std::cout << "nstreams should be multiples of 6 and larger than 5\n";
@@ -972,12 +969,6 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	// GPU  
 	//-----------------------------------------------------------------------//
-    //int dev = 0;
-    //cudaSetDevice(dev);
-    //cudaDeviceProp deviceProp;
-    //cudaGetDeviceProperties(&deviceProp, dev);
-    //printf("Device %d: \"%s\"\n", dev, deviceProp.name);
-    //std::cout << "max texture1d linear: " << deviceProp.maxTexture1DLinear << std::endl;
 	// set device                                                               
 	cudaDeviceProp device_prop;                                                 
 	int dev_id = findCudaDevice(argc, (const char **) argv);                    
@@ -989,6 +980,7 @@ int main(int argc, char*argv[])
 		exit(EXIT_FAILURE);                                                      
 	}                                                                           
 
+	// For more: https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html#group__CUDART__TYPES_1g7eb25f5413a962faad0956d92bae10d0
 	if (device_prop.computeMode == cudaComputeModeExclusive || device_prop.computeMode == cudaComputeModeProhibited)
 	{                                                                           
 		fprintf(stderr, "This sample requires a device in either default or process exclusive mode\n");
@@ -996,12 +988,7 @@ int main(int argc, char*argv[])
 		exit(EXIT_FAILURE);                                                      
 	}      
 
-
-
-
 #if TK
-	//cudaEventCreate(&start_event);
-	//cudaEventCreate(&stop_event);
 	checkCudaErrors(cudaEventCreateWithFlags(&start_event, cudaEventBlockingSync));        
 	checkCudaErrors(cudaEventCreateWithFlags(&stop_event,  cudaEventBlockingSync));
 #endif
@@ -1010,12 +997,17 @@ int main(int argc, char*argv[])
 #if TK
 	cudaEventRecord(start_event, 0);
 #endif
+
+	//--------------//
 	// unified mem 
+	//--------------//
 	checkCudaErrors(cudaMallocManaged((void**)&q,          sizeof(float)  * span));
 	checkCudaErrors(cudaMallocManaged((void**)&formfactor, sizeof(float4) * span));
+
 	// for each combination launch nstreams
 	checkCudaErrors(cudaMallocManaged((void**)&Iq,  sizeof(float) * span * nstreams));
 	checkCudaErrors(cudaMallocManaged((void**)&Iqz, sizeof(float) * span * nstreams));
+
 	// results
 	checkCudaErrors(cudaMallocManaged((void**)&Iq_final,  sizeof(float) * span));
 	checkCudaErrors(cudaMallocManaged((void**)&Iqz_final, sizeof(float) * span));
@@ -1030,7 +1022,6 @@ int main(int argc, char*argv[])
 	       elapsedTime, 
 		   (float) (um_bytes  *  1e-3 )/ elapsedTime);
 
-
 	um_time += elapsedTime;
 #endif
 
@@ -1043,7 +1034,9 @@ int main(int argc, char*argv[])
 		checkCudaErrors(cudaStreamCreate(&(streams[i])));
 	}
 
-	// configure the kernel grid size
+	//-----------------------------------------------------------------------//
+	// configure the kernel grid size  (NOTE: for all kernels' configuration)
+	//-----------------------------------------------------------------------//
 	block.x = 256;
 	grid.x  = ceil( (float) span / block.x );
 
@@ -1079,13 +1072,11 @@ int main(int argc, char*argv[])
 	transfer_time += elapsedTime;
 #endif
 
-	// fixme: one thread doing the i/o
-	//        2nd thread working on the gpu prepare kernel
+	// TODO: one thread doing the i/o, 2nd thread working on the gpu prepare kernel
 	readpdb();
 
-
 	//-----------------------------------------------------------------------//
-	// plan 1 : pair wise compuation
+	// pair wise compuation
 	//-----------------------------------------------------------------------//
 	//  cache the crd and atom_type in constant and texture memory
 	cudaChannelFormatDesc float4Desc = cudaCreateChannelDesc<float4>();
@@ -1110,14 +1101,14 @@ int main(int argc, char*argv[])
 	//std::cout << "line_h : "<< line_h << std::endl;
 	//std::cout << "line_o : "<< line_o << std::endl;
 
-	//------------------------------------------//
-	// assign the workloads
-	//------------------------------------------//
+	//-----------------------//
+	// assign the workloads for each combination
+	//-----------------------//
 	for(int i = 0; i < nstreams; i++)
 	{
 		if(i< stream_per_com)
 		{
-			work_cc(i);
+			work_cc(i);  // compute the begin and end pos for line_cc
 		}else if (i < 2 * stream_per_com){
 			work_hh(i);
 		}else if (i < 3 * stream_per_com){
@@ -1131,19 +1122,10 @@ int main(int argc, char*argv[])
 		}
 	}                                      
 
-/*
-	for(int i=0; i<nstreams; i++)
-	{
-		j_a = beginpos[i];
-		j_b = endpos[i];
-		j_sum = 0;
 
-		for(int m = j_a; m <= j_b; m++)
-			j_sum += (lastpos - m);
-
-		printf("%d\n", j_sum);
-	}
-*/
+	//-----------------------------------------------------------------------//
+	// check the indexing
+	//-----------------------------------------------------------------------//
 
 	int j_a, j_b, j_sum;
 
@@ -1158,31 +1140,31 @@ int main(int argc, char*argv[])
 			j_sum = 0;
 			for(int m = j_a; m <= j_b; m++)
 				j_sum += (line_c - 1 - m);
-			printf("%d\n", j_sum);
+			//printf("%d\n", j_sum);
 		}else if (i < 2 * stream_per_com){
 		// hh
 			j_sum = 0;
 			for(int m = j_a; m <= j_b; m++)
 				j_sum += (line_h - 1 - m);
-			printf("%d\n", j_sum);
+			//printf("%d\n", j_sum);
 		}else if (i < 3 * stream_per_com){
 		// oo
 			j_sum = 0;
 			for(int m = j_a; m <= j_b; m++)
 				j_sum += (line_h - 1 - m);
-			printf("%d\n", j_sum);
+			//printf("%d\n", j_sum);
 		}else if (i < 4 * stream_per_com)
 		{
 		// co
 			if(line_c < line_o)
 			{
 				j_sum = (j_b - j_a + 1) * line_c; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			}
 			else
 			{
 				j_sum = (j_b - j_a + 1) * line_o; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			}
 		}else if (i < 5 * stream_per_com){
 		// ch
@@ -1190,12 +1172,12 @@ int main(int argc, char*argv[])
 			if(line_c < line_h)
 			{
 				j_sum = (j_b - j_a + 1) * line_c; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			}
 			else
 			{
 				j_sum = (j_b - j_a + 1) * line_h; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			}
 		}else {
 		// ho
@@ -1203,25 +1185,17 @@ int main(int argc, char*argv[])
 			if(line_h < line_o)
 			{
 				j_sum = (j_b - j_a + 1) * line_h; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			}
 			else
 			{
 				j_sum = (j_b - j_a + 1) * line_o; 
-				printf("%d\n", j_sum);
+				//printf("%d\n", j_sum);
 			
 			}
 		}
 	}                                      
 
-/*
-	std::cout << "size of beginpos : " << beginpos.size() << std::endl;
-//	std::cout << "size of endpos : "   << endpos.size()   << std::endl;
-	for(int i=0; i<beginpos.size(); i++)
-	{
-		std::cout << beginpos[i] << " - "<< endpos[i] << std::endl;
-	}
-*/
 
 #if TK
 	cudaEventRecord(start_event, 0);
@@ -1271,22 +1245,15 @@ int main(int argc, char*argv[])
 	//-----------------------------------------------------------------------//
 	sum_pairwise();
 
-	//std::cout << span << std::endl;
 
 	cudaDeviceSynchronize(); 
 
-
-//	for(int i = 0; i < span; i++){
-//		// printf("Iq[%d] = %f\n", i, Iq_final[i]);		
-//	}
-
-	//std::cout << "kernels execution time = " << kernel_runtime << " ms\n";
 
 	printf("\n\\-------------------------------\\\n");
 	printf("kernels execution time = %f ms\n", kernel_runtime);
 	printf("transfer time = %f ms\n", transfer_time);
 	printf("memory allocation time (Unified Memory) = %f ms\n", um_time);
-
+	printf("\\-------------------------------\\\n");
 
 	//-----------------------------------------------------------------------//
 	// Free Resource
